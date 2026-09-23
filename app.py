@@ -13,6 +13,7 @@ import io
 import json
 import re
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -31,13 +32,13 @@ ARQ_COTAS = PASTA / "cotas_salvas.csv"
 ESTRATEGIAS = ["LB", "LO", "LS", "EH"]  # também é a ordem de exibição
 DESC_ESTRATEGIA = "LB = Long Biased · LO = Long Only · LS = Long Short · EH = Equity Hedge"
 NOME_ESTRATEGIA = {"LB": "Long Biased", "LO": "Long Only", "LS": "Long Short", "EH": "Equity Hedge"}
-ARQ_BENCH = PASTA / "benchmarks.csv"
+ARQ_BENCH = PASTA / "benchmarks_v2.csv"  # v2: IMA-B oficial da ANBIMA
 BENCH_POR_TIPO = {"LB": ["IPCA + IMA-B"], "LO": ["Ibovespa"], "LS": ["CDI"], "EH": ["CDI"]}
 DESC_BENCH = {
     "CDI": "CDI (Banco Central)",
     "IPCA": "IPCA (IBGE via Banco Central; mês ainda não divulgado fica estável)",
-    "IMA-B": "IMA-B (via ETF IMAB11)",
-    "IPCA + IMA-B": "IPCA + IMA-B (soma dos retornos diários; IMA-B via ETF IMAB11, IPCA do mês ainda não divulgado = 0)",
+    "IMA-B": "IMA-B (ANBIMA)",
+    "IPCA + IMA-B": "IPCA + IMA-B (soma dos retornos diários; IMA-B da ANBIMA, IPCA do mês ainda não divulgado = 0)",
     "Ibovespa": "Ibovespa",
 }
 UA = {"User-Agent": "Mozilla/5.0"}
@@ -60,7 +61,7 @@ def carregar_fundos() -> pd.DataFrame:
         dados = json.loads(ARQ_FUNDOS.read_text(encoding="utf-8"))
     else:
         dados = []
-    df = pd.DataFrame(dados, columns=["CNPJ", "Nome", "Estratégia"])
+    df = pd.DataFrame(dados, columns=["CNPJ", "Nome", "Estratégia", "Subclasse"])
     return df.fillna("").astype(str)
 
 
@@ -102,7 +103,7 @@ def ler_mes(caminho: Path, cnpjs: set[str]) -> pd.DataFrame:
     df = df[df["CNPJ"].isin(cnpjs)]
     if "ID_SUBCLASSE" not in df.columns:
         df["ID_SUBCLASSE"] = ""
-    return df[["CNPJ", "ID_SUBCLASSE", "DT_COMPTC", "VL_QUOTA"]].copy()
+    return df[["CNPJ", "ID_SUBCLASSE", "DT_COMPTC", "VL_QUOTA", "VL_PATRIM_LIQ"]].copy()
 
 
 def atualizar_cotas(cnpjs: list[str]) -> pd.DataFrame:
@@ -130,6 +131,8 @@ def ler_cotas_salvas() -> pd.DataFrame | None:
     df["CNPJ"] = df["CNPJ"].str.zfill(14)
     df["DT_COMPTC"] = pd.to_datetime(df["DT_COMPTC"])
     df["VL_QUOTA"] = pd.to_numeric(df["VL_QUOTA"], errors="coerce")
+    if "VL_PATRIM_LIQ" in df:
+        df["VL_PATRIM_LIQ"] = pd.to_numeric(df["VL_PATRIM_LIQ"], errors="coerce")
     return df.sort_values(["CNPJ", "ID_SUBCLASSE", "DT_COMPTC"])
 
 
@@ -177,17 +180,49 @@ def bench_yahoo(ticker: str, ini: date) -> pd.Series:
     return s[~s.index.duplicated(keep="last")]
 
 
+def _imab_dia(dia: pd.Timestamp):
+    """Número-índice do IMA-B numa data (planilha diária da ANBIMA). None se não houver."""
+    corpo = {"Tipo": "", "DataRef": "", "Pai": "ima", "escolha": "2", "Idioma": "PT", "saida": "csv",
+             "Dt_Ref_Ver": f"{dia:%Y%m%d}", "Dt_Ref": f"{dia:%d/%m/%Y}"}
+    for _ in range(3):
+        try:
+            r = requests.post("https://www.anbima.com.br/informacoes/ima/ima-sh-down.asp",
+                              data=corpo, headers=UA, timeout=30)
+            for linha in r.content.decode("latin-1").splitlines():
+                if linha.startswith("IMA-B;"):
+                    c = linha.split(";")
+                    return pd.to_datetime(c[1], dayfirst=True), float(c[2].replace(".", "").replace(",", "."))
+            return None
+        except requests.RequestException:
+            continue
+    return None
+
+
+def bench_imab(ini: date, fim: date, anterior: pd.Series | None) -> pd.Series:
+    """IMA-B oficial da ANBIMA; baixa só os dias que ainda não estão salvos (e refaz os 3 últimos)."""
+    ja_tem = anterior.dropna() if anterior is not None else pd.Series(dtype="float64")
+    dias = pd.bdate_range(ini, fim)
+    faltam = [d for d in dias if d not in ja_tem.index] + list(dias[-3:])
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        novos = [x for x in ex.map(_imab_dia, sorted(set(faltam))) if x]
+    if not novos and ja_tem.empty:
+        raise RuntimeError("ANBIMA sem resposta")
+    s = pd.concat([ja_tem, pd.Series({d: v for d, v in novos}, dtype="float64")])
+    s = s[~s.index.duplicated(keep="last")].sort_index()
+    return s[s.index >= pd.Timestamp(ini)]
+
+
 def atualizar_benchmarks() -> list[str]:
     """Baixa os benchmarks e grava benchmarks.csv. Retorna a lista de falhas."""
     fim = date.today()
     ini = (pd.Timestamp(fim) - pd.DateOffset(months=14)).date()
+    antigos = ler_benchmarks()
     fontes = {
         "CDI": lambda: bench_cdi(ini, fim),
         "IPCA": lambda: bench_ipca(ini, fim),
-        "IMA-B": lambda: bench_yahoo("IMAB11.SA", ini),
+        "IMA-B": lambda: bench_imab(ini, fim, antigos["IMA-B"] if antigos is not None and "IMA-B" in antigos else None),
         "Ibovespa": lambda: bench_yahoo("^BVSP", ini),
     }
-    antigos = ler_benchmarks()
     series, falhas = {}, []
     for nome, f in fontes.items():
         try:
@@ -319,7 +354,7 @@ def grafico(series_fundos: dict, series_bench: dict, inicio: pd.Timestamp) -> al
 st.set_page_config(page_title="Cotas CVM", layout="wide")
 st.title("Cotas de fundos — CVM")
 st.caption("Fonte: Informe Diário CVM (dados.cvm.gov.br). Performance calculada pela variação da cota. "
-           "Benchmarks: CDI e IPCA (Banco Central), Ibovespa e IMA-B (Yahoo Finance; IMA-B via ETF IMAB11).")
+           "Benchmarks: CDI e IPCA (Banco Central), IMA-B (ANBIMA), Ibovespa (Yahoo Finance).")
 
 # ---------- Meus fundos (editável, salvo automaticamente)
 with st.expander("Meus fundos — adicionar, renomear, classificar ou remover", expanded=not ARQ_FUNDOS.exists()):
@@ -338,6 +373,8 @@ with st.expander("Meus fundos — adicionar, renomear, classificar ou remover", 
             "CNPJ": st.column_config.TextColumn("CNPJ", help="Com ou sem pontuação", required=True),
             "Nome": st.column_config.TextColumn("Nome", help="Como você quer ver o fundo"),
             "Estratégia": st.column_config.SelectboxColumn("Estratégia", options=ESTRATEGIAS, help=DESC_ESTRATEGIA),
+            "Subclasse": st.column_config.TextColumn(
+                "Subclasse", help="Só para fundos com mais de uma subclasse. Em branco = a de maior patrimônio"),
         },
     )
     editado = editado.fillna("").astype(str).reset_index(drop=True)
@@ -374,7 +411,7 @@ if clicou:
         atualizar_cotas(cnpjs)
     except requests.RequestException as e:
         st.error(f"Não consegui baixar os dados da CVM: {e}")
-    with st.spinner("Atualizando benchmarks…"):
+    with st.spinner("Atualizando benchmarks… (na primeira vez o IMA-B leva cerca de 1 minuto)"):
         falhas = atualizar_benchmarks()
     if falhas:
         st.warning("Não consegui atualizar: " + ", ".join(falhas) + ". Mantive os últimos dados disponíveis.")
@@ -402,6 +439,7 @@ cdi = bench["CDI"].dropna() if bench is not None and "CDI" in bench else None
 # ---------- Monta séries e linhas por fundo
 info = {so_digitos(r["CNPJ"]): r for r in fundos.to_dict("records")}
 por_tipo: dict[str, dict] = {}
+multi_sub: list = []
 for cnpj in cnpjs:
     d = cotas[cotas["CNPJ"] == cnpj]
     if d.empty:
@@ -409,12 +447,29 @@ for cnpj in cnpjs:
     f = info[cnpj]
     tipo = f["Estratégia"] if f["Estratégia"] in ESTRATEGIAS else "Sem classificação"
     nome_base = f["Nome"].strip() or fmt_cnpj(cnpj)
-    for sub, g in d.groupby("ID_SUBCLASSE"):
-        nome = nome_base + (f" · {sub}" if sub else "")
-        por_tipo.setdefault(tipo, {})[nome] = (fmt_cnpj(cnpj), g.set_index("DT_COMPTC")["VL_QUOTA"])
+    subs = sorted(d["ID_SUBCLASSE"].unique())
+    if len(subs) > 1:
+        escolhida = f.get("Subclasse", "").strip()
+        if escolhida not in subs:
+            # padrão: subclasse com maior patrimônio na data mais recente
+            if "VL_PATRIM_LIQ" in d:
+                ult = d[d["DT_COMPTC"] == d["DT_COMPTC"].max()]
+                escolhida = ult.sort_values("VL_PATRIM_LIQ", ascending=False)["ID_SUBCLASSE"].iloc[0]
+            else:
+                escolhida = subs[0]
+        multi_sub.append((nome_base, escolhida, subs))
+        d = d[d["ID_SUBCLASSE"] == escolhida]
+    por_tipo.setdefault(tipo, {})[nome_base] = (fmt_cnpj(cnpj), d.set_index("DT_COMPTC")["VL_QUOTA"])
 
 if not por_tipo:
     st.stop()
+
+if multi_sub:
+    with st.expander(f"{len(multi_sub)} fundo(s) com mais de uma subclasse — qual está sendo usada"):
+        st.caption("Por padrão uso a subclasse de maior patrimônio. Para trocar, copie o código desejado "
+                   "para a coluna **Subclasse** em Meus fundos.")
+        for nome, esc, subs in multi_sub:
+            st.markdown(f"**{nome}** — usando `{esc}` · disponíveis: " + ", ".join(f"`{x}`" for x in subs))
 
 # ---------- Controles
 c1, c2 = st.columns([3, 2])
@@ -462,6 +517,8 @@ for tipo in tipos_disp:
            "Cota": st.column_config.NumberColumn(format="%.6f"),
            **{p: pct for p in PERIODOS},
            **{f"{p} %CDI": pct_cdi for p in PERIODOS}}
+    num = [c for c in colunas if c not in ("Fundo", "CNPJ", "Última cota")]
+    tab[num] = tab[num].apply(pd.to_numeric, errors="coerce")  # vazio em vez de "None"
     st.dataframe(tab[colunas], hide_index=True, width="stretch", column_config=cfg)
 
     # gráfico do tipo, com benchmark
