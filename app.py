@@ -257,6 +257,7 @@ def benchmark_soma(ipca: pd.Series, imab: pd.Series) -> pd.Series:
 
 # ================================================================ cálculo
 PERIODOS = ["Dia", "Mês (MTD)", "Mês anterior", "YTD", "12 meses"]
+PERIODOS_CDI = ["YTD", "12 meses"]  # comparação com o CDI só nesses períodos
 
 
 def cota_em(s: pd.Series, data):
@@ -306,6 +307,7 @@ def linha_performance(serie: pd.Series, cdi: pd.Series | None, com_cdi: bool) ->
 # ================================================================ gráfico
 # Esquema de cores Itaú BBA (hub de branding e design).
 AZUL_IBBA, LARANJA_IBBA, AMARELO = "#000512", "#FF5500", "#F7D317"
+VERDE_POS, VERMELHO_NEG = "#1E7B53", "#B3261E"  # texto de retorno positivo / negativo
 CINZA = {85: "#272B35", 70: "#4E5159", 55: "#74767D", 40: "#9A9BA0", 25: "#C0C1C4", 10: "#E6E6E7"}
 # Fundos: laranja primeiro, depois auxiliares da marca em ordem fixa (validada p/ daltonismo).
 PALETA = [LARANJA_IBBA, "#2192A5", CINZA[70], "#1EC86D", CINZA[40], "#FD8309", "#57B49A", CINZA[25]]
@@ -496,23 +498,31 @@ with c2:
     periodo_graf = st.radio("Período do gráfico", ["12 meses", "YTD", "Mês"], horizontal=True)
 
 def estilo_tabela(t: pd.DataFrame, com_cdi: bool):
-    """Formato em %, amarelo em performance negativa e linha do benchmark em cinza (guia IBBA)."""
+    """Retorno positivo em verde, negativo em vermelho; %CDI verde se >= 100%; benchmark em cinza."""
     cols_pct = [c for c in PERIODOS if c in t]
     cols_cdi = [c for c in t if c.endswith("%CDI")]
     eh_bench = t["Fundo"].str.startswith("▸")
 
-    def cor_negativo(v):
-        return f"background-color: {AMARELO}; color: {AZUL_IBBA}" if pd.notna(v) and v < 0 else ""
+    def cor_retorno(v):
+        if pd.isna(v):
+            return ""
+        return f"color: {VERDE_POS}" if v > 0 else (f"color: {VERMELHO_NEG}" if v < 0 else "")
+
+    def cor_cdi(v):
+        if pd.isna(v):
+            return ""
+        return f"color: {VERDE_POS}" if v >= 100 else f"color: {VERMELHO_NEG}"
 
     def cor_bench(linha):
         return [f"background-color: {CINZA[10]}" if eh_bench.loc[linha.name] else ""] * len(linha)
 
-    return t.style.apply(cor_bench, axis=1).map(cor_negativo, subset=cols_pct + cols_cdi)
+    return (t.style.apply(cor_bench, axis=1)
+            .map(cor_retorno, subset=cols_pct)
+            .map(cor_cdi, subset=cols_cdi))
 
 
 FMT_TABELA = {
     "Última cota": st.column_config.DateColumn(format="DD/MM/YYYY"),
-    "Cota": st.column_config.NumberColumn(format="%.6f"),
     **{p: st.column_config.NumberColumn(format="%.2f%%") for p in PERIODOS},
     **{f"{p} %CDI": st.column_config.NumberColumn(format="%.0f%%") for p in PERIODOS},
 }
@@ -546,10 +556,10 @@ for tipo in tipos_disp:
     if linhas_b:
         tab = pd.concat([tab, pd.DataFrame(linhas_b)], ignore_index=True)
 
-    colunas = ["Fundo", "CNPJ", "Última cota", "Cota"] + PERIODOS
+    colunas = ["Fundo", "Última cota"] + PERIODOS
     if com_cdi:
-        colunas += [f"{p} %CDI" for p in PERIODOS]
-    num = [c for c in colunas if c not in ("Fundo", "CNPJ", "Última cota")]
+        colunas += [f"{p} %CDI" for p in PERIODOS_CDI]
+    num = [c for c in colunas if c not in ("Fundo", "Última cota")]
     tab[num] = tab[num].apply(pd.to_numeric, errors="coerce")  # vazio em vez de "None"
     st.dataframe(estilo_tabela(tab[colunas], com_cdi), hide_index=True, width="stretch", column_config=FMT_TABELA)
 
