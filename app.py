@@ -304,9 +304,13 @@ def linha_performance(serie: pd.Series, cdi: pd.Series | None, com_cdi: bool) ->
 
 
 # ================================================================ gráfico
-# Paleta categórica em ordem fixa; benchmarks em cinza tracejado.
-PALETA = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
-CORES_BENCH = ["#3d3d3a", "#8a8980"]
+# Esquema de cores Itaú BBA (hub de branding e design).
+AZUL_IBBA, LARANJA_IBBA, AMARELO = "#000512", "#FF5500", "#F7D317"
+CINZA = {85: "#272B35", 70: "#4E5159", 55: "#74767D", 40: "#9A9BA0", 25: "#C0C1C4", 10: "#E6E6E7"}
+# Fundos: laranja primeiro, depois auxiliares da marca em ordem fixa (validada p/ daltonismo).
+PALETA = [LARANJA_IBBA, "#2192A5", CINZA[70], "#1EC86D", CINZA[40], "#FD8309", "#57B49A", CINZA[25]]
+# Benchmark em azul IBBA (tracejado); um segundo benchmark, se houver, em cinza.
+CORES_BENCH = [AZUL_IBBA, CINZA[55]]
 
 
 def grafico(series_fundos: dict, series_bench: dict, inicio: pd.Timestamp) -> alt.Chart | None:
@@ -330,11 +334,14 @@ def grafico(series_fundos: dict, series_bench: dict, inicio: pd.Timestamp) -> al
 
     perto = alt.selection_point(nearest=True, on="pointerover", fields=["Data"], empty=False)
     base = alt.Chart(df).encode(
-        x=alt.X("Data:T", title=None, axis=alt.Axis(format="%b/%y", grid=False, tickCount="month")),
+        x=alt.X("Data:T", title=None, axis=alt.Axis(format="%b/%y", grid=False, tickCount="month",
+                                                      labelColor=CINZA[70], domainColor=CINZA[25])),
         y=alt.Y("Valor:Q", title="Base 100", scale=alt.Scale(zero=False),
-                axis=alt.Axis(gridColor="#ecebe6", gridDash=[2, 2])),
+                axis=alt.Axis(gridColor=CINZA[10], gridDash=[2, 2], labelColor=CINZA[70],
+                              titleColor=CINZA[70], domain=False)),
         color=alt.Color("Série:N", scale=alt.Scale(domain=dominio, range=cores),
-                        legend=alt.Legend(title=None, orient="bottom", columns=3, labelLimit=260)),
+                        legend=alt.Legend(title=None, orient="bottom", columns=3, labelLimit=260,
+                                          labelColor=AZUL_IBBA)),
     )
     linhas_ch = base.mark_line(strokeWidth=2).encode(
         strokeDash=alt.StrokeDash("Tipo:N", scale=alt.Scale(domain=["Fundo", "Benchmark"],
@@ -346,12 +353,21 @@ def grafico(series_fundos: dict, series_bench: dict, inicio: pd.Timestamp) -> al
         tooltip=[alt.Tooltip("Série:N"), alt.Tooltip("Data:T", format="%d/%m/%Y"),
                  alt.Tooltip("Valor:Q", format=".2f", title="Base 100")],
     )
-    regua = alt.Chart(df).mark_rule(color="#b5b4ad").encode(x="Data:T").transform_filter(perto)
+    regua = alt.Chart(df).mark_rule(color=CINZA[25]).encode(x="Data:T").transform_filter(perto)
     return (linhas_ch + alvo + pontos + regua).properties(height=340)
 
 
 # ================================================================ interface
-st.set_page_config(page_title="Cotas CVM", layout="wide")
+LOGO = PASTA / "logo_itau_bba.png"
+st.set_page_config(page_title="Cotas CVM · Itaú BBA", layout="wide",
+                   page_icon=str(LOGO) if LOGO.exists() else None)
+st.markdown(f"""<style>
+  h1, h2, h3 {{ color: {AZUL_IBBA}; }}
+  .secao {{ font-size: 1.6rem; font-weight: 600; color: {AZUL_IBBA};
+            border-bottom: 3px solid {LARANJA_IBBA}; padding-bottom: .25rem; margin: 2rem 0 .5rem; }}
+</style>""", unsafe_allow_html=True)
+if LOGO.exists():
+    st.image(str(LOGO), width=150)
 st.title("Cotas de fundos — CVM")
 st.caption("Fonte: Informe Diário CVM (dados.cvm.gov.br). Performance calculada pela variação da cota. "
            "Benchmarks: CDI e IPCA (Banco Central), IMA-B (ANBIMA), Ibovespa (Yahoo Finance).")
@@ -479,8 +495,28 @@ with c1:
 with c2:
     periodo_graf = st.radio("Período do gráfico", ["12 meses", "YTD", "Mês"], horizontal=True)
 
-pct = st.column_config.NumberColumn(format="%.2f%%")
-pct_cdi = st.column_config.NumberColumn(format="%.0f%%")
+def estilo_tabela(t: pd.DataFrame, com_cdi: bool):
+    """Formato em %, amarelo em performance negativa e linha do benchmark em cinza (guia IBBA)."""
+    cols_pct = [c for c in PERIODOS if c in t]
+    cols_cdi = [c for c in t if c.endswith("%CDI")]
+    eh_bench = t["Fundo"].str.startswith("▸")
+
+    def cor_negativo(v):
+        return f"background-color: {AMARELO}; color: {AZUL_IBBA}" if pd.notna(v) and v < 0 else ""
+
+    def cor_bench(linha):
+        return [f"background-color: {CINZA[10]}" if eh_bench.loc[linha.name] else ""] * len(linha)
+
+    return t.style.apply(cor_bench, axis=1).map(cor_negativo, subset=cols_pct + cols_cdi)
+
+
+FMT_TABELA = {
+    "Última cota": st.column_config.DateColumn(format="DD/MM/YYYY"),
+    "Cota": st.column_config.NumberColumn(format="%.6f"),
+    **{p: st.column_config.NumberColumn(format="%.2f%%") for p in PERIODOS},
+    **{f"{p} %CDI": st.column_config.NumberColumn(format="%.0f%%") for p in PERIODOS},
+}
+
 todas_series = {}
 
 for tipo in tipos_disp:
@@ -491,7 +527,7 @@ for tipo in tipos_disp:
     nomes_bench = [b for b in BENCH_POR_TIPO.get(tipo, []) if bench is not None and b in bench]
 
     titulo = f"{NOME_ESTRATEGIA[tipo]} ({tipo})" if tipo in NOME_ESTRATEGIA else tipo
-    st.header(titulo, divider="gray")
+    st.markdown(f'<div class="secao">{titulo}</div>', unsafe_allow_html=True)
     if tipo in BENCH_POR_TIPO:
         st.caption("Benchmark: " + " e ".join(DESC_BENCH[b] for b in BENCH_POR_TIPO[tipo]))
 
@@ -513,13 +549,9 @@ for tipo in tipos_disp:
     colunas = ["Fundo", "CNPJ", "Última cota", "Cota"] + PERIODOS
     if com_cdi:
         colunas += [f"{p} %CDI" for p in PERIODOS]
-    cfg = {"Última cota": st.column_config.DateColumn(format="DD/MM/YYYY"),
-           "Cota": st.column_config.NumberColumn(format="%.6f"),
-           **{p: pct for p in PERIODOS},
-           **{f"{p} %CDI": pct_cdi for p in PERIODOS}}
     num = [c for c in colunas if c not in ("Fundo", "CNPJ", "Última cota")]
     tab[num] = tab[num].apply(pd.to_numeric, errors="coerce")  # vazio em vez de "None"
-    st.dataframe(tab[colunas], hide_index=True, width="stretch", column_config=cfg)
+    st.dataframe(estilo_tabela(tab[colunas], com_cdi), hide_index=True, width="stretch", column_config=FMT_TABELA)
 
     # gráfico do tipo, com benchmark
     series_f = {n: s for n, (_, s) in fundos_tipo.items()}
