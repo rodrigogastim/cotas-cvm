@@ -1,0 +1,67 @@
+[
+  {
+    "CNPJ": "60.018.334/0001-14",
+    "Nome": "BTG Synergy Long Only",
+    "Estratégia": "LO"
+  },
+  {
+    "CNPJ": "50.316.699/0001-71",
+    "Nome": "IAM Solana LB",
+    "Estratégia": "LB"
+  },
+  {
+    "CNPJ": "25.423.215/0001-46",
+    "Nome": "IAM Solana EH",
+    "Estratégia": "EH"
+  },
+  {
+    "CNPJ": "57.659.750/0001-97",
+    "Nome": "Norte Equity Hedge",
+    "Estratégia": "EH"
+  },
+  {
+    "CNPJ": "46.997.468/0001-01",
+    "Nome": "SPX Hornet",
+    "Estratégia": "EH"
+  },
+  {
+    "CNPJ": "31.457.442/0001-95",
+    "Nome": "SPX Falcon",
+    "Estratégia": "LB"
+  },
+  {
+    "CNPJ": "49.726.793/0001-10",
+    "Nome": "Springs Equity Hedge",
+    "Estratégia": "EH"
+  },
+  {
+    "CNPJ": "32.071.783/0001-90",
+    "Nome": "Absolute Pace",
+    "Estratégia": "LB"
+  },
+  {
+    "CNPJ": "37.467.515/0001-06",
+    "Nome": "Norte Long Bias",
+    "Estratégia": "LB"
+  },
+  {
+    "CNPJ": "39.471.486/0001-81",
+    "Nome": "Norte Long Only",
+    "Estratégia": "LO"
+  },
+  {
+    "CNPJ": "32.738.755/0001-84",
+    "Nome": "Absoluto Partners",
+    "Estratégia": "LO"
+  },
+  {
+    "CNPJ": "60.018.029/0001-22",
+    "Nome": "BTG Synergy Equity Hedge",
+    "Estratégia": "EH"
+  },
+  {
+    "CNPJ": "60.015.897/0001-59",
+    "Nome": "BTG Synergy Long Bias",
+    "Estratégia": "LB"
+  }
+]
