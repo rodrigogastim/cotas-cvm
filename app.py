@@ -14,6 +14,7 @@ import io
 import json
 import re
 import zipfile
+from time import sleep
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -42,7 +43,14 @@ DESC_BENCH = {
     "IPCA + IMA-B": "IPCA + IMA-B (soma dos retornos diários; IMA-B da ANBIMA, IPCA do mês ainda não divulgado = 0)",
     "Ibovespa": "Ibovespa",
 }
-UA = {"User-Agent": "Mozilla/5.0"}
+# User-Agent de navegador: a CVM (e outras fontes) devolvem 403 para o agente padrão
+# do requests, principalmente a partir de servidores na nuvem como o Streamlit Cloud.
+UA = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"),
+    "Accept": "*/*",
+    "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+}
 
 
 # ================================================================ utilidades
@@ -164,15 +172,26 @@ def meses_necessarios(hoje: date) -> list[str]:
 
 
 def baixar_mes(ym: str, forcar: bool) -> Path | None:
+    """Baixa o zip mensal da CVM. Se falhar e já houver cópia em cache, usa o cache."""
     destino = CACHE_DIR / f"inf_diario_fi_{ym}.zip"
     if destino.exists() and not forcar:
         return destino
-    r = requests.get(BASE_URL.format(ym=ym), timeout=180)
-    if r.status_code == 404:  # mês corrente pode ainda não ter sido publicado
-        return destino if destino.exists() else None
-    r.raise_for_status()
-    destino.write_bytes(r.content)
-    return destino
+    erro = None
+    for tentativa in range(3):
+        try:
+            r = requests.get(BASE_URL.format(ym=ym), headers=UA, timeout=180)
+            if r.status_code == 404:  # mês corrente pode ainda não ter sido publicado
+                return destino if destino.exists() else None
+            r.raise_for_status()
+            destino.write_bytes(r.content)
+            return destino
+        except requests.RequestException as e:
+            erro = e
+            if tentativa < 2:
+                sleep(2 * (tentativa + 1))
+    if destino.exists():  # mês já baixado antes: segue com o que tem
+        return destino
+    raise erro
 
 
 def ler_mes(caminho: Path, cnpjs: set[str]) -> pd.DataFrame:
@@ -194,13 +213,15 @@ def atualizar_cotas(cnpjs: list[str]) -> pd.DataFrame:
     meses = meses_necessarios(date.today())
     partes = []
     barra = st.progress(0.0, text="Baixando dados da CVM…")
-    for i, ym in enumerate(meses):
-        barra.progress((i + 1) / len(meses), text=f"Lendo {ym[4:]}/{ym[:4]}…")
-        # mês atual e anterior são sempre rebaixados (a CVM revisa dados recentes)
-        arq = baixar_mes(ym, forcar=i >= len(meses) - 2)
-        if arq:
-            partes.append(ler_mes(arq, set(cnpjs)))
-    barra.empty()
+    try:
+        for i, ym in enumerate(meses):
+            barra.progress((i + 1) / len(meses), text=f"Lendo {ym[4:]}/{ym[:4]}…")
+            # mês atual e anterior são sempre rebaixados (a CVM revisa dados recentes)
+            arq = baixar_mes(ym, forcar=i >= len(meses) - 2)
+            if arq:
+                partes.append(ler_mes(arq, set(cnpjs)))
+    finally:
+        barra.empty()
     df = pd.concat(partes) if partes else pd.DataFrame(columns=["CNPJ", "ID_SUBCLASSE", "DT_COMPTC", "VL_QUOTA"])
     df = df.fillna({"ID_SUBCLASSE": ""}).drop_duplicates(["CNPJ", "ID_SUBCLASSE", "DT_COMPTC"], keep="last")
     df.to_csv(ARQ_COTAS, index=False)
@@ -517,7 +538,13 @@ if clicou:
     try:
         atualizar_cotas(cnpjs)
     except requests.RequestException as e:
-        st.error(f"Não consegui baixar os dados da CVM: {e}")
+        codigo = getattr(getattr(e, "response", None), "status_code", None)
+        if codigo == 403:
+            st.error("A CVM recusou o download (403). O site costuma bloquear acessos vindos de "
+                     "servidores na nuvem. Tente de novo em alguns minutos; se persistir, rode o app "
+                     "no seu computador para atualizar e suba o `cotas_salvas.csv` gerado.")
+        else:
+            st.error(f"Não consegui baixar os dados da CVM: {e}")
     with st.spinner("Atualizando benchmarks… (na primeira vez o IMA-B leva cerca de 1 minuto)"):
         falhas = atualizar_benchmarks()
     if falhas:
