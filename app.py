@@ -365,8 +365,10 @@ def grafico(series_fundos: dict, series_bench: dict, inicio: pd.Timestamp) -> al
 # 2021 e anuais em HIST/ até 2020) só quando o usuário abre o histórico de um fundo.
 # O resultado fica salvo (mês a mês, primeira e última cota) para não baixar de novo.
 HIST_URL = BASE_URL.replace("inf_diario_fi_{ym}.zip", "HIST/inf_diario_fi_{ano}.zip")
-ARQ_HIST = PASTA / "historico_mensal.csv"
-ARQ_HIST_STATUS = PASTA / "historico_status.json"
+ARQ_HIST = PASTA / "historico_mensal_v2.csv"
+ARQ_HIST_STATUS = PASTA / "historico_status_v2.json"
+HIST_DESDE = "2025-01"  # o histórico mês a mês começa aqui (ou no início do fundo, se for depois)
+HIST_BASE = "2024-12"   # mês lido só para ter a cota de fechamento anterior a jan/25
 MESES_PT = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
 COLS_HIST = ["CNPJ", "ID_SUBCLASSE", "MES", "DT_INI", "COTA_INI", "DT_FIM", "COTA_FIM"]
 
@@ -375,11 +377,9 @@ def _periodos_antes(mes_limite: str) -> list[tuple[str, str]]:
     """Períodos (do mais novo ao mais antigo) com meses anteriores a `mes_limite` (AAAA-MM)."""
     out = []
     p = pd.Period(mes_limite, "M") - 1
-    while p >= pd.Period("2021-01", "M"):
+    while p >= pd.Period(HIST_BASE, "M"):
         out.append(("M", p.strftime("%Y%m")))
         p -= 1
-    for ano in range(min(2020, p.year), 1999, -1):
-        out.append(("A", str(ano)))
     return out
 
 
@@ -467,17 +467,22 @@ def _arquivo_do_periodo(per) -> tuple[Path | None, bool]:
     return destino, True
 
 
+def _mes_janela() -> str:
+    """Primeiro mês coberto por cotas_salvas.csv."""
+    return f"{meses_necessarios(date.today())[0][:4]}-{meses_necessarios(date.today())[0][4:]}"
+
+
 def garantir_historico(alvo: str, cnpjs: list[str], cotas: pd.DataFrame, aviso) -> None:
     """Completa historico_mensal.csv para `alvo` até o início do fundo (aproveitando p/ os demais)."""
     status, hist = _ler_status(), _ler_hist()
-    inicio_janela = cotas["DT_COMPTC"].min()
-    mes_janela = inicio_janela.strftime("%Y-%m")
-    # fundos que começaram dentro da janela de cotas_salvas já têm o histórico completo
+    mes_janela = _mes_janela()
+    # fundo ausente no 1º mês da janela de cotas_salvas começou depois: histórico já completo
     for c in cnpjs:
-        d = cotas[cotas["CNPJ"] == c]
+        d = cotas[(cotas["CNPJ"] == c) & (cotas["DT_COMPTC"].dt.strftime("%Y-%m") >= mes_janela)]
         s = status.setdefault(c, {"feitos": [], "inicio": None})
-        if not d.empty and d["DT_COMPTC"].min() > inicio_janela and not s["inicio"]:
-            s["inicio"] = d["DT_COMPTC"].min().strftime("%Y-%m")
+        primeiro = d["DT_COMPTC"].min().strftime("%Y-%m") if not d.empty else None
+        if primeiro and primeiro > mes_janela and not s["inicio"]:
+            s["inicio"] = primeiro
 
     def precisa(c, per):
         s = status[c]
@@ -497,6 +502,7 @@ def garantir_historico(alvo: str, cnpjs: list[str], cotas: pd.DataFrame, aviso) 
             df, dt_min = _extrair_arquivo(caminho, set(participantes))
             if apagar:
                 caminho.unlink(missing_ok=True)
+            df = df[df["DT_COMPTC"].dt.strftime("%Y%m") == per[1]]  # ignora linhas com datas de outros meses
         novos = _agregar_mensal(df)
         hist = pd.concat([hist, novos]).drop_duplicates(["CNPJ", "ID_SUBCLASSE", "MES"], keep="last")
         for c in participantes:
@@ -506,8 +512,6 @@ def garantir_historico(alvo: str, cnpjs: list[str], cotas: pd.DataFrame, aviso) 
             if dc.empty:  # fundo ainda não existia neste período -> começa no mês seguinte
                 ini = _mes_seguinte(_ultimo_mes(per))
                 s["inicio"] = max(s["inicio"] or ini, ini)
-            elif dt_min is not None and dc["DT_COMPTC"].min() > dt_min:  # começou dentro do período
-                s["inicio"] = dc["DT_COMPTC"].min().strftime("%Y-%m")
         hist.to_csv(ARQ_HIST, index=False)
         ARQ_HIST_STATUS.write_text(json.dumps(status))
 
@@ -515,7 +519,8 @@ def garantir_historico(alvo: str, cnpjs: list[str], cotas: pd.DataFrame, aviso) 
 def serie_mensal(cnpj: str, sub_escolhida: str, cotas: pd.DataFrame) -> pd.DataFrame:
     """Retornos mensais do fundo (MES, DT_INI, DT_FIM, RET) juntando histórico antigo e janela recente."""
     hist = _ler_hist()
-    rec = _agregar_mensal(cotas[cotas["CNPJ"] == cnpj].copy())
+    rec = cotas[(cotas["CNPJ"] == cnpj) & (cotas["DT_COMPTC"].dt.strftime("%Y-%m") >= _mes_janela())]
+    rec = _agregar_mensal(rec.copy())
     todos = pd.concat([hist[hist["CNPJ"] == cnpj], rec]).drop_duplicates(["ID_SUBCLASSE", "MES"], keep="last")
     subs = set(todos["ID_SUBCLASSE"])
     # usa a subclasse escolhida; nos meses anteriores à criação das subclasses, a série sem subclasse
@@ -538,7 +543,8 @@ def serie_mensal(cnpj: str, sub_escolhida: str, cotas: pd.DataFrame) -> pd.DataF
     esc["RET"] = [x * 100 for x in ret]
     esc["DT_BASE"] = pd.to_datetime(dt_base)
     esc["DT_FIM"] = pd.to_datetime(esc["DT_FIM"])
-    return esc[["MES", "DT_BASE", "DT_FIM", "RET"]]
+    esc = esc[esc["MES"] >= HIST_DESDE]  # dez/24 só serve de base para o retorno de jan/25
+    return esc[["MES", "DT_BASE", "DT_FIM", "RET"]].reset_index(drop=True)
 
 
 # ---------- benchmarks de longo prazo (para o histórico)
@@ -825,8 +831,7 @@ def mostrar_historico(nome: str, cnpj: str, sub: str, tipo: str):
     cotas_ = ler_cotas_salvas()
     status = _ler_status().get(cnpj, {})
     if not status.get("inicio"):
-        st.info("Na primeira vez, o app busca o histórico na CVM desde o início do fundo. "
-                "Fundos antigos podem levar alguns minutos; depois fica salvo.")
+        st.info("Na primeira vez, o app busca na CVM o histórico desde jan/2025 (leva cerca de 1 minuto); depois fica salvo.")
     barra = st.progress(0.0, text="Verificando histórico…")
 
     def aviso(i, n, per):
@@ -877,8 +882,16 @@ def mostrar_historico(nome: str, cnpj: str, sub: str, tipo: str):
     acum = (np.prod(1 + r) - 1) * 100
     anual = ((1 + acum / 100) ** (1 / anos) - 1) * 100 if anos >= 1 else None
     k = st.columns(5)
-    k[0].metric("Início", mensal["DT_BASE"].min().strftime("%d/%m/%Y"))
-    k[1].metric("Desde o início", _fmt_pct(acum))
+    inicio_fundo = _ler_status().get(cnpj, {}).get("inicio")
+    desde_inicio = bool(inicio_fundo) and inicio_fundo >= HIST_DESDE
+    if desde_inicio:
+        k[0].metric("Início do fundo", mensal["DT_BASE"].min().strftime("%d/%m/%Y"))
+        k[1].metric("Desde o início", _fmt_pct(acum))
+    else:
+        m0 = mensal["MES"].min()
+        rot = f"{MESES_PT[int(m0[5:]) - 1].lower()}/{m0[:4]}"
+        k[0].metric("Série desde", rot)
+        k[1].metric(f"Desde {rot}", _fmt_pct(acum))
     k[2].metric("Ao ano", _fmt_pct(anual) if anual is not None else "–")
     k[3].metric("Meses positivos", f"{(r > 0).sum()} de {len(r)}")
     melhor, pior = mensal.loc[mensal["RET"].idxmax()], mensal.loc[mensal["RET"].idxmin()]
