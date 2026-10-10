@@ -414,7 +414,20 @@ PALETA = [LARANJA_IBBA, "#2192A5", CINZA[70], "#1EC86D", CINZA[40], "#FD8309", "
 CORES_BENCH = [AZUL_IBBA, CINZA[55]]
 
 
-def grafico(series_fundos: dict, series_bench: dict, inicio: pd.Timestamp) -> alt.Chart | None:
+def apelidos(nomes: list[str]) -> dict[str, str]:
+    """Nome curto para a legenda: a primeira palavra; se repetir, acrescenta palavras até ficar único."""
+    out = {}
+    for n in nomes:
+        partes = n.split()
+        k = 1
+        while k < len(partes) and sum(1 for m in nomes if m.split()[:k] == partes[:k]) > 1:
+            k += 1
+        out[n] = " ".join(partes[:k]) or n
+    return out
+
+
+def grafico(series_fundos: dict, series_bench: dict, inicio: pd.Timestamp, altura: int = 480) -> alt.Chart | None:
+    curto = apelidos(list(series_fundos))
     linhas = []
     for tipo, grupo in (("Fundo", series_fundos), ("Benchmark", series_bench)):
         for nome, s in grupo.items():
@@ -423,12 +436,12 @@ def grafico(series_fundos: dict, series_bench: dict, inicio: pd.Timestamp) -> al
             if len(base_data) == 0:
                 continue
             s = s[s.index >= base_data[-1]]
-            linhas.append(pd.DataFrame({"Data": s.index, "Série": nome, "Tipo": tipo,
+            linhas.append(pd.DataFrame({"Data": s.index, "Série": curto.get(nome, nome), "Nome": nome, "Tipo": tipo,
                                         "Valor": (s / s.iloc[0] * 100).values}))
     if not linhas:
         return None
     df = pd.concat(linhas)
-    nomes_f = sorted(series_fundos)  # cor segue o fundo (ordem alfabética), não o ranking
+    nomes_f = [curto[n] for n in sorted(series_fundos)]  # cor segue o fundo (ordem alfabética), não o ranking
     nomes_b = list(series_bench)
     dominio = nomes_f + nomes_b
     cores = [PALETA[i % len(PALETA)] for i in range(len(nomes_f))] + CORES_BENCH[: len(nomes_b)]
@@ -451,11 +464,11 @@ def grafico(series_fundos: dict, series_bench: dict, inicio: pd.Timestamp) -> al
     alvo = base.mark_point(size=120).encode(opacity=alt.value(0)).add_params(perto)
     pontos = base.mark_point(filled=True, size=50).encode(
         opacity=alt.condition(perto, alt.value(1), alt.value(0)),
-        tooltip=[alt.Tooltip("Série:N"), alt.Tooltip("Data:T", format="%d/%m/%Y"),
+        tooltip=[alt.Tooltip("Nome:N", title="Fundo"), alt.Tooltip("Data:T", format="%d/%m/%Y"),
                  alt.Tooltip("Valor:Q", format=".2f", title="Base 100")],
     )
     regua = alt.Chart(df).mark_rule(color=CINZA[25]).encode(x="Data:T").transform_filter(perto)
-    return (linhas_ch + alvo + pontos + regua).properties(height=340)
+    return (linhas_ch + alvo + pontos + regua).properties(height=altura)
 
 
 # ================================================================ histórico desde o início
@@ -1163,6 +1176,7 @@ for tipo in tipos_disp:
     chave = f"tabela_{tipo}"
     st.dataframe(estilo_tabela(final[colunas + ["_cnpj", "_sub", "_sep"]], com_cdi), hide_index=True,
                  width="content", column_config=cfg_tab, column_order=colunas, key=chave, row_height=28,
+                 height=min(1400, 28 * (len(final) + 1) + 3),  # mostra todas as linhas, sem rolagem interna
                  selection_mode="single-cell", placeholder=" ",
                  on_select=lambda k=chave, t=final, tp=tipo: _abrir_historico(k, t, tp))
     ytd_bench = tab.loc[tab["_quartil"] == -1, "YTD"].dropna()
