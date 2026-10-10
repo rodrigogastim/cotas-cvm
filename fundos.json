@@ -262,5 +262,11 @@
     "Nome": "Alpha Key Long Only",
     "Estratégia": "LO",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "52.304.477/0001-64",
+    "Nome": "Alpha Key Long Short",
+    "Estratégia": "EH",
+    "Subclasse": ""
   }
 ]
