@@ -589,6 +589,8 @@ st.set_page_config(page_title="Cotas CVM · Itaú BBA", layout="wide",
                    page_icon=str(LOGO) if LOGO.exists() else None)
 st.markdown(f"""<style>
   h1, h2, h3 {{ color: {AZUL_IBBA}; }}
+  .quartil {{ font-weight: 600; color: {AZUL_IBBA}; margin: .9rem 0 .2rem; font-size: .95rem; }}
+  .quartil span {{ font-weight: 400; color: {CINZA[55]}; font-size: .85rem; }}
   .secao {{ font-size: 1.6rem; font-weight: 600; color: {AZUL_IBBA};
             border-bottom: 3px solid {LARANJA_IBBA}; padding-bottom: .25rem; margin: 2rem 0 .5rem; }}
 </style>""", unsafe_allow_html=True)
@@ -598,43 +600,100 @@ st.title("Cotas de fundos — CVM")
 st.caption("Fonte: Informe Diário CVM (dados.cvm.gov.br). Performance calculada pela variação da cota. "
            "Benchmarks: CDI e IPCA (Banco Central), IMA-B (ANBIMA), Ibovespa (Yahoo Finance).")
 
-# ---------- Meus fundos (editável, salvo automaticamente)
+# ---------- Meus fundos: adicionar (formulário), colar vários, editar/remover (salva só ao clicar)
+def cnpj_valido(c: str) -> bool:
+    d = [int(x) for x in so_digitos(c)]
+    if len(d) != 14 or len(set(d)) == 1:
+        return False
+    def dv(n, pesos):
+        r = sum(a * b for a, b in zip(n, pesos)) % 11
+        return 0 if r < 2 else 11 - r
+    p1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+    return dv(d[:12], p1) == d[12] and dv(d[:13], [6] + p1) == d[13]
+
+
+def adicionar_fundos(novos: list[dict]) -> tuple[int, list[str]]:
+    """Acrescenta fundos à lista; devolve (quantos entraram, avisos)."""
+    atual = carregar_fundos()
+    existentes = set(atual["CNPJ"].map(so_digitos))
+    entram, avisos = [], []
+    for f in novos:
+        c = so_digitos(f.get("CNPJ", ""))
+        if not cnpj_valido(c):
+            avisos.append(f"CNPJ inválido: {f.get('CNPJ', '')}")
+        elif c in existentes:
+            avisos.append(f"Já está na lista: {fmt_cnpj(c)}")
+        else:
+            existentes.add(c)
+            est = str(f.get("Estratégia", "")).strip().upper()
+            entram.append({"CNPJ": fmt_cnpj(c), "Nome": str(f.get("Nome", "")).strip(),
+                           "Estratégia": est if est in ESTRATEGIAS else "", "Subclasse": str(f.get("Subclasse", "")).strip()})
+    if entram:
+        salvar_fundos(pd.concat([atual, pd.DataFrame(entram)], ignore_index=True))
+    return len(entram), avisos
+
+
 with st.expander("Meus fundos — adicionar, renomear, classificar ou remover", expanded=not ARQ_FUNDOS.exists()):
-    st.caption(
-        "Adicione uma linha para cada fundo. Para remover, selecione a linha e aperte Delete. "
-        f"As alterações são salvas automaticamente. {DESC_ESTRATEGIA}"
-    )
-    fundos = carregar_fundos()
-    editado = st.data_editor(
-        fundos,
-        key="editor_fundos",
-        num_rows="dynamic",
-        hide_index=True,
-        width="stretch",
-        column_config={
-            "CNPJ": st.column_config.TextColumn("CNPJ", help="Com ou sem pontuação", required=True),
-            "Nome": st.column_config.TextColumn("Nome", help="Como você quer ver o fundo"),
-            "Estratégia": st.column_config.SelectboxColumn("Estratégia", options=ESTRATEGIAS, help=DESC_ESTRATEGIA),
-            "Subclasse": st.column_config.TextColumn(
-                "Subclasse", help="Só para fundos com mais de uma subclasse. Em branco = a de maior patrimônio"),
-        },
-    )
-    editado = editado.fillna("").astype(str).reset_index(drop=True)
-    sem_cnpj = (editado["CNPJ"].map(so_digitos) == "").any()
+    for msg in st.session_state.pop("msg_fundos", []):
+        (st.success if msg.startswith("✓") else st.warning)(msg)
+    aba_add, aba_colar, aba_editar = st.tabs(["➕ Adicionar fundo", "📋 Colar vários", "✏️ Editar / remover"])
+
+    with aba_add:
+        with st.form("form_add", clear_on_submit=True, border=False):
+            c1, c2, c3 = st.columns([2, 3, 1])
+            novo_cnpj = c1.text_input("CNPJ", placeholder="00.000.000/0000-00")
+            novo_nome = c2.text_input("Nome", placeholder="Como você quer ver o fundo")
+            nova_est = c3.selectbox("Estratégia", ESTRATEGIAS, index=None, placeholder="—", help=DESC_ESTRATEGIA)
+            if st.form_submit_button("Adicionar", type="primary"):
+                n, avisos = adicionar_fundos([{"CNPJ": novo_cnpj, "Nome": novo_nome, "Estratégia": nova_est or ""}])
+                st.session_state["msg_fundos"] = ([f"✓ {novo_nome or fmt_cnpj(novo_cnpj)} adicionado. "
+                                                   "Clique em Atualizar cotas para baixar os dados."] if n else []) + avisos
+                st.rerun()
+        st.caption(DESC_ESTRATEGIA)
+
+    with aba_colar:
+        st.caption("Um fundo por linha, no formato **CNPJ ; Nome ; Estratégia** (o nome e a estratégia são opcionais). "
+                   "Dá para colar direto de uma planilha do Excel (três colunas).")
+        with st.form("form_colar", clear_on_submit=True, border=False):
+            texto = st.text_area("Fundos", height=150, label_visibility="collapsed",
+                                 placeholder="12.345.678/0001-90 ; Fundo Exemplo FIC FIA ; LO\n98.765.432/0001-10 ; Outro Fundo ; EH")
+            if st.form_submit_button("Adicionar todos", type="primary"):
+                novos = []
+                for linha in texto.splitlines():
+                    partes = [x.strip() for x in re.split(r"[;\t]", linha)]
+                    if partes and so_digitos(partes[0]):
+                        novos.append({"CNPJ": partes[0], "Nome": partes[1] if len(partes) > 1 else "",
+                                      "Estratégia": partes[2] if len(partes) > 2 else ""})
+                n, avisos = adicionar_fundos(novos)
+                st.session_state["msg_fundos"] = ([f"✓ {n} fundo(s) adicionado(s). Clique em Atualizar cotas."] if n else []) + avisos
+                st.rerun()
+
+    with aba_editar:
+        st.caption("Edite à vontade (nada recarrega enquanto você digita) e clique em **Salvar alterações**. "
+                   "Para remover, selecione a linha pela caixinha à esquerda e aperte Delete.")
+        fundos = carregar_fundos()
+        with st.form("form_editar", border=False):
+            editado = st.data_editor(
+                fundos, key="editor_fundos", num_rows="dynamic", hide_index=True, width="stretch",
+                column_config={
+                    "CNPJ": st.column_config.TextColumn("CNPJ", help="Com ou sem pontuação", required=True),
+                    "Nome": st.column_config.TextColumn("Nome", help="Como você quer ver o fundo"),
+                    "Estratégia": st.column_config.SelectboxColumn("Estratégia", options=ESTRATEGIAS, help=DESC_ESTRATEGIA),
+                    "Subclasse": st.column_config.TextColumn(
+                        "Subclasse", help="Só para fundos com mais de uma subclasse. Em branco = a de maior patrimônio"),
+                },
+            )
+            if st.form_submit_button("Salvar alterações", type="primary"):
+                editado = editado.fillna("").astype(str).reset_index(drop=True)
+                invalidos = [c for c in editado["CNPJ"] if so_digitos(c) and not cnpj_valido(c)]
+                salvar_fundos(editado[editado["CNPJ"].map(so_digitos) != ""])
+                st.session_state.pop("editor_fundos", None)
+                st.session_state["msg_fundos"] = ["✓ Lista salva."] + [f"CNPJ inválido (confira): {c}" for c in invalidos]
+                st.rerun()
+
     if ARQ_FUNDOS.exists():
-        st.download_button(
-            "Baixar lista de fundos (fundos.json)",
-            ARQ_FUNDOS.read_bytes(),
-            file_name="fundos.json",
-            mime="application/json",
-            help="Suba este arquivo no GitHub para a lista ficar fixa no link",
-        )
-    if sem_cnpj:
-        st.caption(":orange[Preencha o CNPJ da nova linha para salvar.]")
-    elif not editado.equals(fundos.reset_index(drop=True)):
-        salvar_fundos(editado)
-        st.session_state.pop("editor_fundos", None)
-        st.rerun()
+        st.download_button("Baixar lista de fundos (fundos.json)", ARQ_FUNDOS.read_bytes(), file_name="fundos.json",
+                           mime="application/json", help="Suba este arquivo no GitHub para a lista ficar fixa no link")
 
 fundos = carregar_fundos()
 cnpjs = [so_digitos(c) for c in fundos["CNPJ"] if so_digitos(c)]
@@ -749,10 +808,12 @@ def estilo_tabela(t: pd.DataFrame, com_cdi: bool):
     return est
 
 
+# larguras fixas para as tabelas dos quartis ficarem alinhadas entre si
 FMT_TABELA = {
-    "Última cota": st.column_config.DateColumn(format="DD/MM/YYYY"),
-    **{p: st.column_config.NumberColumn(format="%.2f%%") for p in PERIODOS},
-    **{f"{p} %CDI": st.column_config.NumberColumn(format="%.0f%%") for p in PERIODOS},
+    "Fundo": st.column_config.TextColumn(width=260),
+    "Última cota": st.column_config.DateColumn(format="DD/MM/YYYY", width=100),
+    **{p: st.column_config.NumberColumn(format="%.2f%%", width=95) for p in PERIODOS},
+    **{f"{p} %CDI": st.column_config.NumberColumn(format="%.0f%%", width=110) for p in PERIODOS},
 }
 
 def _fmt_pct(v, casas=2):
@@ -961,8 +1022,14 @@ for tipo in tipos_disp:
             lb = linha_performance(sb, cdi, com_cdi)
             lb.update({"Fundo": f"▸ {b} (benchmark)", "_cnpj": "", "_sub": ""})
             linhas_b.append(lb)
+    # quartil pela performance YTD dentro da estratégia (1º = melhores)
+    n_ytd = tab["YTD"].notna().sum()
+    pos = tab["YTD"].rank(ascending=False, method="first")
+    tab["_quartil"] = [int((p - 1) * 4 // n_ytd) + 1 if pd.notna(p) else 0 for p in pos]
     if linhas_b:
-        tab = pd.concat([tab, pd.DataFrame(linhas_b)], ignore_index=True)
+        tb = pd.DataFrame(linhas_b)
+        tb["_quartil"] = -1
+        tab = pd.concat([tab, tb], ignore_index=True)
 
     colunas = ["Fundo", "Última cota"] + PERIODOS
     if com_cdi:
@@ -970,14 +1037,31 @@ for tipo in tipos_disp:
     num = [c for c in colunas if c not in ("Fundo", "Última cota")]
     tab[num] = tab[num].apply(pd.to_numeric, errors="coerce")  # vazio em vez de "None"
     tab["Histórico"] = ["ver histórico ›" if c else "" for c in tab["_cnpj"]]
-    tab = tab.reset_index(drop=True)
     colunas = colunas + ["Histórico"]
-    chave = f"tabela_{tipo}"
-    st.dataframe(estilo_tabela(tab[colunas + ["_cnpj", "_sub"]], com_cdi), hide_index=True, width="stretch",
-                 column_config={**FMT_TABELA, "Histórico": st.column_config.TextColumn(
-                     "Histórico", help="Clique para ver a rentabilidade mês a mês desde o início")},
-                 column_order=colunas, key=chave, selection_mode="single-cell",
-                 on_select=lambda k=chave, t=tab, tp=tipo: _abrir_historico(k, t, tp))
+    cfg_tab = {**FMT_TABELA, "Histórico": st.column_config.TextColumn(
+        "Histórico", width=120, help="Clique para ver a rentabilidade mês a mês desde o início")}
+    ytd_bench = tab.loc[tab["_quartil"] == -1, "YTD"].dropna()
+    grupos = [(q, f"{q}º quartil") for q in (1, 2, 3, 4)] + [(0, "Sem YTD"), (-1, "Benchmark")]
+    for q, rotulo in grupos:
+        parte = tab[tab["_quartil"] == q].reset_index(drop=True)
+        if parte.empty:
+            continue
+        if q > 0:
+            faixa = f"YTD de {parte['YTD'].min():.2f}% a {parte['YTD'].max():.2f}%"
+            st.markdown(f'<div class="quartil">{rotulo} <span>· {faixa} · {len(parte)} fundo(s)</span></div>',
+                        unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="quartil">{rotulo}</div>', unsafe_allow_html=True)
+        chave = f"tabela_{tipo}_{q}"
+        st.dataframe(estilo_tabela(parte[colunas + ["_cnpj", "_sub"]], com_cdi), hide_index=True, width="stretch",
+                     column_config=cfg_tab, column_order=colunas, key=chave, selection_mode="single-cell", placeholder="–",
+                     on_select=lambda k=chave, t=parte, tp=tipo: _abrir_historico(k, t, tp))
+        if q == -1 and not ytd_bench.empty and n_ytd:
+            fundos_ytd = tab.loc[tab["_quartil"] > 0, "YTD"]
+            pos_b = int((fundos_ytd > ytd_bench.iloc[0]).sum()) + 1
+            q_b = int((pos_b - 1) * 4 // (n_ytd + 1)) + 1
+            st.caption(f"Pelo YTD, o benchmark ficaria no {q_b}º quartil "
+                       f"({int((fundos_ytd > ytd_bench.iloc[0]).sum())} de {n_ytd} fundos acima dele).")
 
     # gráfico do tipo, com benchmark
     series_f = {n: s for n, (_, s, _) in fundos_tipo.items()}
