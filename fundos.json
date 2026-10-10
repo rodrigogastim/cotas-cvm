@@ -178,5 +178,11 @@
     "Nome": "",
     "Estratégia": "",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "09.412.822/0001-54",
+    "Nome": "Squadra Long Only",
+    "Estratégia": "LO",
+    "Subclasse": ""
   }
 ]
