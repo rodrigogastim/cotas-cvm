@@ -9,6 +9,7 @@ Arquivos salvos ao lado do app:
   cotas_salvas.csv   -> últimas cotas baixadas (abre o app já com os números)
   cache_cvm/         -> arquivos mensais da CVM (evita baixar de novo)
 """
+import base64
 import io
 import json
 import re
@@ -57,12 +58,88 @@ def fmt_cnpj(c: str) -> str:
 
 
 # ================================================================ lista de fundos
+# No Streamlit Cloud o disco é temporário: o que você adiciona pelo link some quando
+# o app reinicia. Por isso a lista é lida e gravada no próprio repositório do GitHub.
+# Configure em Settings -> Secrets:
+#   [github]
+#   token  = "github_pat_..."      (fine-grained, permissão Contents: Read and write)
+#   repo   = "usuario/repositorio"
+#   path   = "fundos.json"
+#   branch = "main"
+# Sem esses Secrets, o app grava em arquivo local (bom para rodar no seu computador).
+COLUNAS_FUNDOS = ["CNPJ", "Nome", "Estratégia", "Subclasse"]
+API_GH = "https://api.github.com"
+
+
+def cfg_github() -> dict | None:
+    try:
+        g = st.secrets["github"]
+        return {"token": g["token"], "repo": g["repo"],
+                "path": g.get("path", "fundos.json"), "branch": g.get("branch", "main")}
+    except Exception:  # noqa: BLE001 — sem Secrets configurados, usa o arquivo local
+        return None
+
+
+def _hdr_github(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28"}
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _ler_github(repo: str, path: str, branch: str, token: str) -> tuple[list, str | None]:
+    """Retorna (lista de fundos, sha). sha=None quando o arquivo ainda não existe."""
+    r = requests.get(f"{API_GH}/repos/{repo}/contents/{path}",
+                     headers=_hdr_github(token), params={"ref": branch}, timeout=20)
+    if r.status_code == 404:
+        return [], None
+    r.raise_for_status()
+    d = r.json()
+    return json.loads(base64.b64decode(d["content"]).decode("utf-8") or "[]"), d["sha"]
+
+
+def _gravar_github(c: dict, dados: list) -> bool:
+    conteudo = json.dumps(dados, ensure_ascii=False, indent=2) + "\n"
+    corpo = {"message": f"Atualiza lista de fundos ({len(dados)} fundos)",
+             "content": base64.b64encode(conteudo.encode("utf-8")).decode("ascii"),
+             "branch": c["branch"]}
+    if st.session_state.get("_sha_fundos"):
+        corpo["sha"] = st.session_state["_sha_fundos"]
+    url = f"{API_GH}/repos/{c['repo']}/contents/{c['path']}"
+    r = requests.put(url, headers=_hdr_github(c["token"]), json=corpo, timeout=20)
+    if r.status_code in (409, 422):  # sha desatualizado (outra aba gravou antes): relê e repete
+        try:
+            _ler_github.clear()
+            _, sha = _ler_github(c["repo"], c["path"], c["branch"], c["token"])
+            corpo["sha"] = sha
+            if sha is None:
+                corpo.pop("sha", None)
+            r = requests.put(url, headers=_hdr_github(c["token"]), json=corpo, timeout=20)
+        except requests.RequestException:
+            pass
+    if not r.ok:
+        st.error(f"Não consegui salvar a lista no GitHub ({r.status_code}). "
+                 "Confira o token e o repositório nos Secrets.")
+        return False
+    st.session_state["_sha_fundos"] = r.json()["content"]["sha"]
+    _ler_github.clear()
+    return True
+
+
 def carregar_fundos() -> pd.DataFrame:
-    if ARQ_FUNDOS.exists():
+    c = cfg_github()
+    if c:
+        try:
+            dados, sha = _ler_github(c["repo"], c["path"], c["branch"], c["token"])
+            st.session_state["_sha_fundos"] = sha
+        except Exception as e:  # noqa: BLE001 — GitHub fora do ar não pode derrubar o app
+            st.error(f"Não consegui ler a lista de fundos no GitHub: {e}")
+            dados = st.session_state.get("_fundos_cache", [])
+        st.session_state["_fundos_cache"] = dados
+    elif ARQ_FUNDOS.exists():
         dados = json.loads(ARQ_FUNDOS.read_text(encoding="utf-8"))
     else:
         dados = []
-    df = pd.DataFrame(dados, columns=["CNPJ", "Nome", "Estratégia", "Subclasse"])
+    df = pd.DataFrame(dados, columns=COLUNAS_FUNDOS)
     return df.fillna("").astype(str)
 
 
@@ -70,7 +147,13 @@ def salvar_fundos(df: pd.DataFrame) -> pd.DataFrame:
     df = df.fillna("").astype(str).copy()
     df["CNPJ"] = df["CNPJ"].map(fmt_cnpj)
     df = df[df["CNPJ"] != ""].drop_duplicates("CNPJ")
-    ARQ_FUNDOS.write_text(json.dumps(df.to_dict("records"), ensure_ascii=False, indent=2), encoding="utf-8")
+    dados = df.to_dict("records")
+    c = cfg_github()
+    if c:
+        _gravar_github(c, dados)
+        st.session_state["_fundos_cache"] = dados
+    else:
+        ARQ_FUNDOS.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
     return df.reset_index(drop=True)
 
 
@@ -633,7 +716,7 @@ def adicionar_fundos(novos: list[dict]) -> tuple[int, list[str]]:
     return len(entram), avisos
 
 
-with st.expander("Meus fundos — adicionar, renomear, classificar ou remover", expanded=not ARQ_FUNDOS.exists()):
+with st.expander("Meus fundos — adicionar, renomear, classificar ou remover", expanded=carregar_fundos().empty):
     for msg in st.session_state.pop("msg_fundos", []):
         (st.success if msg.startswith("✓") else st.warning)(msg)
     aba_add, aba_colar, aba_editar = st.tabs(["➕ Adicionar fundo", "📋 Colar vários", "✏️ Editar / remover"])
@@ -691,9 +774,15 @@ with st.expander("Meus fundos — adicionar, renomear, classificar ou remover", 
                 st.session_state["msg_fundos"] = ["✓ Lista salva."] + [f"CNPJ inválido (confira): {c}" for c in invalidos]
                 st.rerun()
 
-    if ARQ_FUNDOS.exists():
-        st.download_button("Baixar lista de fundos (fundos.json)", ARQ_FUNDOS.read_bytes(), file_name="fundos.json",
-                           mime="application/json", help="Suba este arquivo no GitHub para a lista ficar fixa no link")
+    lista_atual = carregar_fundos()
+    if cfg_github():
+        st.caption(f"✓ A lista ({len(lista_atual)} fundos) é salva automaticamente no GitHub "
+                   f"({cfg_github()['repo']}). Não precisa subir o fundos.json.")
+    else:
+        st.caption(":orange[Sem os Secrets do GitHub: a lista fica só neste servidor e some quando o app reinicia.]")
+    st.download_button("Baixar cópia da lista (fundos.json)",
+                       json.dumps(lista_atual.to_dict("records"), ensure_ascii=False, indent=2).encode("utf-8"),
+                       file_name="fundos.json", mime="application/json", help="Cópia de segurança")
 
 fundos = carregar_fundos()
 cnpjs = [so_digitos(c) for c in fundos["CNPJ"] if so_digitos(c)]
