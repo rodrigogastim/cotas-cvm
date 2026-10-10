@@ -226,5 +226,11 @@
     "Nome": "JGP Long Biased",
     "Estratégia": "LB",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "45.127.383/0001-00",
+    "Nome": "Tenax Long Only",
+    "Estratégia": "LO",
+    "Subclasse": ""
   }
 ]
