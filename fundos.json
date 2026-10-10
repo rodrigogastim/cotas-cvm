@@ -184,5 +184,11 @@
     "Nome": "Squadra Long Only",
     "Estratégia": "LO",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "09.285.146/0001-03",
+    "Nome": "Squadra Long Biased",
+    "Estratégia": "LB",
+    "Subclasse": ""
   }
 ]
