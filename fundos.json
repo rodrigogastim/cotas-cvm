@@ -190,5 +190,11 @@
     "Nome": "Squadra Long Biased",
     "Estratégia": "LB",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "12.823.624/0001-98",
+    "Nome": "Oceana Long Biased",
+    "Estratégia": "LB",
+    "Subclasse": ""
   }
 ]
