@@ -274,5 +274,11 @@
     "Nome": "Genoa Arpa Long Biased",
     "Estratégia": "LB",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "11.145.320/0001-56",
+    "Nome": "Atmos Long Only",
+    "Estratégia": "LO",
+    "Subclasse": ""
   }
 ]
