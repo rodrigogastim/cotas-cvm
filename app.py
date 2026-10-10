@@ -920,7 +920,7 @@ def estilo_tabela(t: pd.DataFrame, com_cdi: bool):
 ROTULO_PER = {"Mês (MTD)": "MTD", "12 meses": "12M", "24 meses": "24M", "36 meses": "36M"}
 # larguras fixas para as tabelas dos quartis ficarem alinhadas entre si
 FMT_TABELA = {
-    "Fundo": st.column_config.TextColumn(width=215),
+    "Fundo": st.column_config.TextColumn(width=215, pinned=True),  # fica fixa ao rolar para a direita
     "Última cota": st.column_config.DateColumn("Cota de", format="DD/MM/YY", width=72),
     **{p: st.column_config.NumberColumn(ROTULO_PER.get(p, p), format="%.2f%%", width=74) for p in PERIODOS},
     **{f"{p} %CDI": st.column_config.NumberColumn(f"{ROTULO_PER.get(p, p)} %CDI", format="%.0f%%", width=90)
