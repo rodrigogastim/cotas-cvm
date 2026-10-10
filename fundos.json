@@ -232,5 +232,11 @@
     "Nome": "Tenax Long Only",
     "Estratégia": "LO",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "56.964.025/0001-60",
+    "Nome": "Tenax Equity Hedge",
+    "Estratégia": "EH",
+    "Subclasse": ""
   }
 ]
