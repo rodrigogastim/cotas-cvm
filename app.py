@@ -158,10 +158,13 @@ def salvar_fundos(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ================================================================ download CVM
+JANELA_MESES = 37  # cobre 36 meses + a cota base do início da janela
+
+
 def meses_necessarios(hoje: date) -> list[str]:
     """Do mês de 13 meses atrás até o mês atual (cobre 12M, YTD e mês)."""
     fim = pd.Timestamp(hoje).to_period("M")
-    return [p.strftime("%Y%m") for p in pd.period_range(fim - 13, fim, freq="M")]
+    return [p.strftime("%Y%m") for p in pd.period_range(fim - JANELA_MESES, fim, freq="M")]
 
 
 def baixar_mes(ym: str, forcar: bool) -> Path | None:
@@ -198,9 +201,18 @@ def atualizar_cotas(cnpjs: list[str]) -> pd.DataFrame:
     for i, ym in enumerate(meses):
         barra.progress((i + 1) / len(meses), text=f"Lendo {ym[4:]}/{ym[:4]}…")
         # mês atual e anterior são sempre rebaixados (a CVM revisa dados recentes)
-        arq = baixar_mes(ym, forcar=i >= len(meses) - 2)
+        recente = i >= len(meses) - 2
+        ext, lista = CACHE_DIR / f"ext_{ym}.csv", CACHE_DIR / f"ext_{ym}.json"
+        if not recente and ext.exists() and lista.exists() and set(cnpjs) <= set(json.loads(lista.read_text())):
+            partes.append(pd.read_csv(ext, dtype=str).fillna({"ID_SUBCLASSE": ""}))  # mês antigo já lido antes
+            continue
+        arq = baixar_mes(ym, forcar=recente)
         if arq:
-            partes.append(ler_mes(arq, set(cnpjs)))
+            d = ler_mes(arq, set(cnpjs))
+            partes.append(d)
+            if not recente:  # meses antigos não mudam: guarda só as linhas dos seus fundos
+                d.to_csv(ext, index=False)
+                lista.write_text(json.dumps(sorted(set(cnpjs))))
     barra.empty()
     df = pd.concat(partes) if partes else pd.DataFrame(columns=["CNPJ", "ID_SUBCLASSE", "DT_COMPTC", "VL_QUOTA"])
     df = df.fillna({"ID_SUBCLASSE": ""}).drop_duplicates(["CNPJ", "ID_SUBCLASSE", "DT_COMPTC"], keep="last")
@@ -299,7 +311,7 @@ def bench_imab(ini: date, fim: date, anterior: pd.Series | None) -> pd.Series:
 def atualizar_benchmarks() -> list[str]:
     """Baixa os benchmarks e grava benchmarks.csv. Retorna a lista de falhas."""
     fim = date.today()
-    ini = (pd.Timestamp(fim) - pd.DateOffset(months=14)).date()
+    ini = (pd.Timestamp(fim) - pd.DateOffset(months=JANELA_MESES + 1)).date()
     antigos = ler_benchmarks()
     fontes = {
         "CDI": lambda: bench_cdi(ini, fim),
@@ -340,7 +352,7 @@ def benchmark_soma(ipca: pd.Series, imab: pd.Series) -> pd.Series:
 
 
 # ================================================================ cálculo
-PERIODOS = ["Dia", "Mês (MTD)", "Mês anterior", "YTD", "12 meses"]
+PERIODOS = ["Dia", "Mês (MTD)", "YTD", "12 meses", "24 meses", "36 meses"]
 PERIODOS_CDI = ["YTD", "12 meses"]  # comparação com o CDI só nesses períodos
 
 
@@ -362,6 +374,8 @@ def janelas(serie: pd.Series) -> dict:
         "Dia": (ant, ult),
         "Mês (MTD)": (fm1, ult),
         "Mês anterior": (fm2, fm1),
+        "24 meses": (ult - pd.DateOffset(years=2), ult),
+        "36 meses": (ult - pd.DateOffset(years=3), ult),
         "YTD": (pd.Timestamp(ult.year - 1, 12, 31), ult),
         "12 meses": (ult - pd.DateOffset(years=1), ult),
     }
@@ -869,7 +883,8 @@ with c1:
     tipos_disp = [t for t in ESTRATEGIAS + ["Sem classificação"] if t in por_tipo]
     filtro = st.multiselect("Estratégias", tipos_disp, placeholder="Todas")
 with c2:
-    periodo_graf = st.radio("Período do gráfico", ["12 meses", "YTD", "Mês"], horizontal=True)
+    periodo_graf = st.radio("Período do gráfico", ["Mês", "YTD", "12 meses", "24 meses", "36 meses"], index=2,
+                            horizontal=True)
 
 def estilo_tabela(t: pd.DataFrame, com_cdi: bool):
     """Retorno positivo em verde, negativo em vermelho; %CDI verde se >= 100%; benchmark em cinza."""
@@ -902,12 +917,14 @@ def estilo_tabela(t: pd.DataFrame, com_cdi: bool):
     return est
 
 
+ROTULO_PER = {"Mês (MTD)": "MTD", "12 meses": "12M", "24 meses": "24M", "36 meses": "36M"}
 # larguras fixas para as tabelas dos quartis ficarem alinhadas entre si
 FMT_TABELA = {
-    "Fundo": st.column_config.TextColumn(width=260),
-    "Última cota": st.column_config.DateColumn(format="DD/MM/YYYY", width=100),
-    **{p: st.column_config.NumberColumn(format="%.2f%%", width=95) for p in PERIODOS},
-    **{f"{p} %CDI": st.column_config.NumberColumn(format="%.0f%%", width=110) for p in PERIODOS},
+    "Fundo": st.column_config.TextColumn(width=215),
+    "Última cota": st.column_config.DateColumn("Cota de", format="DD/MM/YY", width=72),
+    **{p: st.column_config.NumberColumn(ROTULO_PER.get(p, p), format="%.2f%%", width=74) for p in PERIODOS},
+    **{f"{p} %CDI": st.column_config.NumberColumn(f"{ROTULO_PER.get(p, p)} %CDI", format="%.0f%%", width=90)
+       for p in PERIODOS},
 }
 
 def _fmt_pct(v, casas=2):
@@ -1130,10 +1147,10 @@ for tipo in tipos_disp:
         colunas += [f"{p} %CDI" for p in PERIODOS_CDI]
     num = [c for c in colunas if c not in ("Fundo", "Última cota")]
     tab[num] = tab[num].apply(pd.to_numeric, errors="coerce")  # vazio em vez de "None"
-    tab["Histórico"] = ["ver histórico ›" if c else "" for c in tab["_cnpj"]]
+    tab["Histórico"] = ["histórico ›" if c else "" for c in tab["_cnpj"]]
     colunas = colunas + ["Histórico"]
     cfg_tab = {**FMT_TABELA, "Histórico": st.column_config.TextColumn(
-        "Histórico", width=120, help="Clique para ver a rentabilidade mês a mês desde o início")}
+        "Histórico", width=92, help="Clique para ver a rentabilidade mês a mês desde o início")}
     # tabela única ordenada pelo YTD; uma linha amarela marca o início de cada quartil (2º, 3º, 4º)
     linhas_tab, q_ant = [], None
     for _, r in tab.iterrows():
@@ -1145,7 +1162,7 @@ for tipo in tipos_disp:
     final = pd.DataFrame(linhas_tab)
     chave = f"tabela_{tipo}"
     st.dataframe(estilo_tabela(final[colunas + ["_cnpj", "_sub", "_sep"]], com_cdi), hide_index=True,
-                 width="stretch", column_config=cfg_tab, column_order=colunas, key=chave,
+                 width="content", column_config=cfg_tab, column_order=colunas, key=chave, row_height=28,
                  selection_mode="single-cell", placeholder=" ",
                  on_select=lambda k=chave, t=final, tp=tipo: _abrir_historico(k, t, tp))
     ytd_bench = tab.loc[tab["_quartil"] == -1, "YTD"].dropna()
@@ -1161,7 +1178,7 @@ for tipo in tipos_disp:
     series_f = {n: s for n, (_, s, _) in fundos_tipo.items()}
     todas_series.update(series_f)
     j = janelas(pd.Series(0, index=[ref - pd.Timedelta(days=1), ref]))
-    inicio = {"12 meses": j["12 meses"][0], "YTD": j["YTD"][0], "Mês": j["Mês (MTD)"][0]}[periodo_graf]
+    inicio = {"Mês": j["Mês (MTD)"][0]}.get(periodo_graf) or j[periodo_graf][0]
     series_b = {b: bench[b].dropna() for b in nomes_bench}
     ch = grafico(series_f, {k: v[v.index <= ref] for k, v in series_b.items()}, inicio)
     if ch is not None:
@@ -1169,7 +1186,7 @@ for tipo in tipos_disp:
         if series_b:
             st.caption("Linha tracejada = benchmark. Passe o mouse para ver os valores.")
 
-st.caption("Clique no nome de um fundo (ou em **ver histórico ›**) para abrir a rentabilidade mês a mês desde o início.")
+st.caption("Clique no nome de um fundo (ou em **histórico ›**) para abrir a rentabilidade mês a mês desde o início.")
 if "abrir_hist" in st.session_state:
     mostrar_historico(*st.session_state.pop("abrir_hist"))
 
