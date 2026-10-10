@@ -196,5 +196,11 @@
     "Nome": "Oceana Long Biased",
     "Estratégia": "LB",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "17.157.131/0001-80",
+    "Nome": "Oceana Long Only",
+    "Estratégia": "LO",
+    "Subclasse": ""
   }
 ]
