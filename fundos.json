@@ -268,5 +268,11 @@
     "Nome": "Alpha Key Long Short",
     "Estratégia": "EH",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "37.495.383/0001-26",
+    "Nome": "Genoa Arpa Long Biased",
+    "Estratégia": "LB",
+    "Subclasse": ""
   }
 ]
