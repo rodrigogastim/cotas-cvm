@@ -202,5 +202,11 @@
     "Nome": "Oceana Long Only",
     "Estratégia": "LO",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "15.656.344/0001-20",
+    "Nome": "Oceana Equity Hedge",
+    "Estratégia": "EH",
+    "Subclasse": ""
   }
 ]
