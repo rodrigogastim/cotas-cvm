@@ -214,5 +214,11 @@
     "Nome": "JGP Long Only",
     "Estratégia": "LO",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "60.511.488/0001-43",
+    "Nome": "JGP Equity Hedge",
+    "Estratégia": "EH",
+    "Subclasse": ""
   }
 ]
