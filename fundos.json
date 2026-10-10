@@ -238,5 +238,11 @@
     "Nome": "Tenax Equity Hedge",
     "Estratégia": "EH",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "26.210.505/0001-74",
+    "Nome": "Truxt Long Biased",
+    "Estratégia": "LB",
+    "Subclasse": ""
   }
 ]
