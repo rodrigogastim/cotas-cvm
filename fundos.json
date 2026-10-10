@@ -244,5 +244,11 @@
     "Nome": "Truxt Long Biased",
     "Estratégia": "LB",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "26.262.377/0001-02",
+    "Nome": "Truxt Long Short",
+    "Estratégia": "EH",
+    "Subclasse": ""
   }
 ]
