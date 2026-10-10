@@ -256,5 +256,11 @@
     "Nome": "Truxt Long Only",
     "Estratégia": "LO",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "34.839.385/0001-05",
+    "Nome": "Alpha Key Long Only",
+    "Estratégia": "LO",
+    "Subclasse": ""
   }
 ]
