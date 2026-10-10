@@ -391,7 +391,8 @@ def linha_performance(serie: pd.Series, cdi: pd.Series | None, com_cdi: bool) ->
 # ================================================================ gráfico
 # Esquema de cores Itaú BBA (hub de branding e design).
 AZUL_IBBA, LARANJA_IBBA, AMARELO = "#000512", "#FF5500", "#F7D317"
-VERDE_POS, VERMELHO_NEG = "#1E7B53", "#B3261E"  # texto de retorno positivo / negativo
+VERDE_POS, VERMELHO_NEG = "#1E7B53", "#B3261E"
+AMARELO_QUARTIL = "#F6E7A6"  # amarelo IBBA suavizado, para as faixas de quartil  # texto de retorno positivo / negativo
 CINZA = {85: "#272B35", 70: "#4E5159", 55: "#74767D", 40: "#9A9BA0", 25: "#C0C1C4", 10: "#E6E6E7"}
 # Fundos: laranja primeiro, depois auxiliares da marca em ordem fixa (validada p/ daltonismo).
 PALETA = [LARANJA_IBBA, "#2192A5", CINZA[70], "#1EC86D", CINZA[40], "#FD8309", "#57B49A", CINZA[25]]
@@ -886,7 +887,11 @@ def estilo_tabela(t: pd.DataFrame, com_cdi: bool):
             return ""
         return f"color: {VERDE_POS}" if v >= 100 else f"color: {VERMELHO_NEG}"
 
+    eh_sep = t["_sep"].fillna(False).astype(bool) if "_sep" in t else pd.Series(False, index=t.index)
+
     def cor_bench(linha):
+        if eh_sep.loc[linha.name]:  # faixa do quartil: amarelo suave, texto azul IBBA
+            return [f"background-color: {AMARELO_QUARTIL}; color: {AZUL_IBBA}; font-weight: 600"] * len(linha)
         return [f"background-color: {CINZA[10]}" if eh_bench.loc[linha.name] else ""] * len(linha)
 
     est = (t.style.apply(cor_bench, axis=1)
@@ -1129,28 +1134,28 @@ for tipo in tipos_disp:
     colunas = colunas + ["Histórico"]
     cfg_tab = {**FMT_TABELA, "Histórico": st.column_config.TextColumn(
         "Histórico", width=120, help="Clique para ver a rentabilidade mês a mês desde o início")}
+    # tabela única ordenada pelo YTD; uma linha amarela marca o início de cada quartil (2º, 3º, 4º)
+    linhas_tab, q_ant = [], None
+    for _, r in tab.iterrows():
+        q = r["_quartil"]
+        if q > 1 and q != q_ant:
+            linhas_tab.append({"Fundo": f"{q}º quartil", "_cnpj": "", "_sub": "", "_sep": True, "Histórico": ""})
+        q_ant = q
+        linhas_tab.append({**r.to_dict(), "_sep": False})
+    final = pd.DataFrame(linhas_tab)
+    chave = f"tabela_{tipo}"
+    st.dataframe(estilo_tabela(final[colunas + ["_cnpj", "_sub", "_sep"]], com_cdi), hide_index=True,
+                 width="stretch", column_config=cfg_tab, column_order=colunas, key=chave,
+                 selection_mode="single-cell", placeholder=" ",
+                 on_select=lambda k=chave, t=final, tp=tipo: _abrir_historico(k, t, tp))
     ytd_bench = tab.loc[tab["_quartil"] == -1, "YTD"].dropna()
-    grupos = [(q, f"{q}º quartil") for q in (1, 2, 3, 4)] + [(0, "Sem YTD"), (-1, "Benchmark")]
-    for q, rotulo in grupos:
-        parte = tab[tab["_quartil"] == q].reset_index(drop=True)
-        if parte.empty:
-            continue
-        if q > 0:
-            faixa = f"YTD de {parte['YTD'].min():.2f}% a {parte['YTD'].max():.2f}%"
-            st.markdown(f'<div class="quartil">{rotulo} <span>· {faixa} · {len(parte)} fundo(s)</span></div>',
-                        unsafe_allow_html=True)
-        else:
-            st.markdown(f'<div class="quartil">{rotulo}</div>', unsafe_allow_html=True)
-        chave = f"tabela_{tipo}_{q}"
-        st.dataframe(estilo_tabela(parte[colunas + ["_cnpj", "_sub"]], com_cdi), hide_index=True, width="stretch",
-                     column_config=cfg_tab, column_order=colunas, key=chave, selection_mode="single-cell", placeholder="–",
-                     on_select=lambda k=chave, t=parte, tp=tipo: _abrir_historico(k, t, tp))
-        if q == -1 and not ytd_bench.empty and n_ytd:
-            fundos_ytd = tab.loc[tab["_quartil"] > 0, "YTD"]
-            pos_b = int((fundos_ytd > ytd_bench.iloc[0]).sum()) + 1
-            q_b = int((pos_b - 1) * 4 // (n_ytd + 1)) + 1
-            st.caption(f"Pelo YTD, o benchmark ficaria no {q_b}º quartil "
-                       f"({int((fundos_ytd > ytd_bench.iloc[0]).sum())} de {n_ytd} fundos acima dele).")
+    if not ytd_bench.empty and n_ytd:
+        acima = int((tab.loc[tab["_quartil"] > 0, "YTD"] > ytd_bench.iloc[0]).sum())
+        q_b = int(acima * 4 // (n_ytd + 1)) + 1
+        st.caption(f"Ordenado pelo YTD; as faixas amarelas separam os quartis. "
+                   f"O benchmark ficaria no {q_b}º quartil ({acima} de {n_ytd} fundos acima dele).")
+    else:
+        st.caption("Ordenado pelo YTD; as faixas amarelas separam os quartis.")
 
     # gráfico do tipo, com benchmark
     series_f = {n: s for n, (_, s, _) in fundos_tipo.items()}
