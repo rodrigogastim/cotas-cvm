@@ -208,5 +208,11 @@
     "Nome": "Oceana Equity Hedge",
     "Estratégia": "EH",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "11.228.311/0001-29",
+    "Nome": "JGP Long Only",
+    "Estratégia": "LO",
+    "Subclasse": ""
   }
 ]
