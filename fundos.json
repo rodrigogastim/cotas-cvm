@@ -292,5 +292,11 @@
     "Nome": "XP Investor LB",
     "Estratégia": "LB",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "34.791.421/0001-08",
+    "Nome": "Navi Cruise",
+    "Estratégia": "LO",
+    "Subclasse": ""
   }
 ]
