@@ -286,5 +286,11 @@
     "Nome": "XP Investor EH",
     "Estratégia": "EH",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "18.993.924/0001-00",
+    "Nome": "XP Investor LB",
+    "Estratégia": "LB",
+    "Subclasse": ""
   }
 ]
