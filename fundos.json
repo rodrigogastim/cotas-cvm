@@ -298,5 +298,11 @@
     "Nome": "Navi Long Biased",
     "Estratégia": "LB",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "53.600.131/0001-76",
+    "Nome": "Acuto Long Only",
+    "Estratégia": "LO",
+    "Subclasse": ""
   }
 ]
