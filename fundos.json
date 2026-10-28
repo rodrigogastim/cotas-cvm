@@ -304,5 +304,11 @@
     "Nome": "Acuto Long Only",
     "Estratégia": "LO",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "73.232.530/0001-39",
+    "Nome": "Dynamo Cougar",
+    "Estratégia": "LO",
+    "Subclasse": ""
   }
 ]
