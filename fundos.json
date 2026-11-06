@@ -322,5 +322,11 @@
     "Nome": "AZ Quest LO",
     "Estratégia": "LO",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "11.392.165/0001-72",
+    "Nome": "AZ Quest Long Biased",
+    "Estratégia": "LB",
+    "Subclasse": ""
   }
 ]
