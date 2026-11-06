@@ -328,5 +328,11 @@
     "Nome": "AZ Quest Small Caps",
     "Estratégia": "LO",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "13.974.750/0001-06",
+    "Nome": "AZ Quest Long Biased",
+    "Estratégia": "LB",
+    "Subclasse": ""
   }
 ]
