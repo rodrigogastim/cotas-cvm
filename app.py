@@ -416,6 +416,8 @@ def linha_performance(serie: pd.Series, cdi: pd.Series | None, com_cdi: bool) ->
 # Esquema de cores Itaú BBA (hub de branding e design).
 AZUL_IBBA, LARANJA_IBBA, AMARELO = "#000512", "#FF5500", "#F7D317"
 VERDE_POS, VERMELHO_NEG = "#1E7B53", "#B3261E"
+VERDE_DESTAQUE = "#DCEFE4"  # fundo da célula quando o fundo supera o benchmark
+COLS_DESTAQUE = ["YTD", "12 meses", "24 meses", "36 meses"]
 AMARELO_QUARTIL = "#F6E7A6"  # amarelo IBBA suavizado, para as faixas de quartil  # texto de retorno positivo / negativo
 CINZA = {85: "#272B35", 70: "#4E5159", 55: "#74767D", 40: "#9A9BA0", 25: "#C0C1C4", 10: "#E6E6E7"}
 # Fundos: laranja primeiro, depois auxiliares da marca em ordem fixa (validada p/ daltonismo).
@@ -944,6 +946,18 @@ def estilo_tabela(t: pd.DataFrame, com_cdi: bool):
     est = (t.style.apply(cor_bench, axis=1)
            .map(cor_retorno, subset=cols_pct)
            .map(cor_cdi, subset=cols_cdi))
+    # destaque: fundo acima do benchmark no período (YTD, 12M, 24M, 36M)
+    bench_linha = t[eh_bench]
+    cols_flag = [c for c in COLS_DESTAQUE if c in t]
+    if not bench_linha.empty and cols_flag:
+        ref = bench_linha.iloc[0]
+
+        def acima_bench(col):
+            r = ref[col.name]
+            return [f"background-color: {VERDE_DESTAQUE}; font-weight: 700"
+                    if pd.notna(v) and pd.notna(r) and not eh_bench.loc[i] and not eh_sep.loc[i] and v > r else ""
+                    for i, v in col.items()]
+        est = est.apply(acima_bench, axis=0, subset=cols_flag)
     if "Histórico" in t:
         est = est.map(lambda v: f"color: {LARANJA_IBBA}; font-weight: 600", subset=["Histórico"])
     return est
@@ -1203,7 +1217,8 @@ for tipo in tipos_disp:
         acima = int((tab.loc[tab["_quartil"] > 0, "YTD"] > ytd_bench.iloc[0]).sum())
         q_b = int(acima * 4 // (n_ytd + 1)) + 1
         st.caption(f"Ordenado pelo YTD; as faixas amarelas separam os quartis. "
-                   f"O benchmark ficaria no {q_b}º quartil ({acima} de {n_ytd} fundos acima dele).")
+                   f"O benchmark ficaria no {q_b}º quartil ({acima} de {n_ytd} fundos acima dele). "
+                   "Células em verde claro: fundo acima do benchmark no período (YTD, 12M, 24M e 36M).")
     else:
         st.caption("Ordenado pelo YTD; as faixas amarelas separam os quartis.")
 
