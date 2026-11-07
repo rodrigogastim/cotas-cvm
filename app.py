@@ -707,9 +707,7 @@ def ret_bench(indice: pd.Series, d0, d1):
 
 
 # ================================================================ interface
-LOGO = PASTA / "logo_itau_bba.png"
-st.set_page_config(page_title="Cotas CVM · Itaú BBA", layout="wide",
-                   page_icon=str(LOGO) if LOGO.exists() else None)
+st.set_page_config(page_title="Cotas CVM", layout="wide", page_icon="📊")
 st.markdown(f"""<style>
   h1, h2, h3 {{ color: {AZUL_IBBA}; }}
   .quartil {{ font-weight: 600; color: {AZUL_IBBA}; margin: .9rem 0 .2rem; font-size: .95rem; }}
@@ -717,8 +715,6 @@ st.markdown(f"""<style>
   .secao {{ font-size: 1.6rem; font-weight: 600; color: {AZUL_IBBA};
             border-bottom: 3px solid {LARANJA_IBBA}; padding-bottom: .25rem; margin: 2rem 0 .5rem; }}
 </style>""", unsafe_allow_html=True)
-if LOGO.exists():
-    st.image(str(LOGO), width=150)
 st.title("Cotas de fundos — CVM")
 st.caption("Fonte: Informe Diário CVM (dados.cvm.gov.br). Performance calculada pela variação da cota. "
            "Benchmarks: CDI e IPCA (Banco Central), IMA-B (ANBIMA), Ibovespa (Yahoo Finance).")
