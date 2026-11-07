@@ -85,7 +85,7 @@ def _hdr_github(token: str) -> dict:
             "X-GitHub-Api-Version": "2022-11-28"}
 
 
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def _ler_github(repo: str, path: str, branch: str, token: str) -> tuple[list, str | None]:
     """Retorna (lista de fundos, sha). sha=None quando o arquivo ainda não existe."""
     r = requests.get(f"{API_GH}/repos/{repo}/contents/{path}",
@@ -223,6 +223,11 @@ def atualizar_cotas(cnpjs: list[str]) -> pd.DataFrame:
 def ler_cotas_salvas() -> pd.DataFrame | None:
     if not ARQ_COTAS.exists():
         return None
+    return _ler_cotas_cache(ARQ_COTAS.stat().st_mtime)  # relê o arquivo só quando ele muda
+
+
+@st.cache_data(max_entries=2, show_spinner=False)
+def _ler_cotas_cache(_mtime: float) -> pd.DataFrame:
     df = pd.read_csv(ARQ_COTAS, dtype=str).fillna({"ID_SUBCLASSE": ""})
     df["CNPJ"] = df["CNPJ"].str.zfill(14)
     df["DT_COMPTC"] = pd.to_datetime(df["DT_COMPTC"])
@@ -337,6 +342,11 @@ def atualizar_benchmarks() -> list[str]:
 def ler_benchmarks() -> pd.DataFrame | None:
     if not ARQ_BENCH.exists():
         return None
+    return _ler_bench_cache(ARQ_BENCH.stat().st_mtime)
+
+
+@st.cache_data(max_entries=2, show_spinner=False)
+def _ler_bench_cache(_mtime: float) -> pd.DataFrame:
     df = pd.read_csv(ARQ_BENCH, index_col="Data", parse_dates=["Data"])
     if {"IPCA", "IMA-B"} <= set(df.columns):
         df["IPCA + IMA-B"] = benchmark_soma(df["IPCA"], df["IMA-B"])
@@ -436,6 +446,9 @@ def grafico(series_fundos: dict, series_bench: dict, inicio: pd.Timestamp, altur
             if len(base_data) == 0:
                 continue
             s = s[s.index >= base_data[-1]]
+            if len(s) > 300:  # janelas longas: 1 ponto por semana deixa o gráfico bem mais leve
+                s = pd.concat([s.resample("W-FRI").last().dropna(), s.iloc[[-1]]])
+                s = s[~s.index.duplicated(keep="last")]
             linhas.append(pd.DataFrame({"Data": s.index, "Série": curto.get(nome, nome), "Nome": nome, "Tipo": tipo,
                                         "Valor": (s / s.iloc[0] * 100).values}))
     if not linhas:
@@ -454,21 +467,20 @@ def grafico(series_fundos: dict, series_bench: dict, inicio: pd.Timestamp, altur
                 axis=alt.Axis(gridColor=CINZA[10], gridDash=[2, 2], labelColor=CINZA[70],
                               titleColor=CINZA[70], domain=False)),
         color=alt.Color("Série:N", scale=alt.Scale(domain=dominio, range=cores),
-                        legend=alt.Legend(title=None, orient="bottom", columns=3, labelLimit=260,
+                        legend=alt.Legend(title=None, orient="bottom", columns=8, labelLimit=160,
                                           labelColor=AZUL_IBBA)),
     )
     linhas_ch = base.mark_line(strokeWidth=2).encode(
         strokeDash=alt.StrokeDash("Tipo:N", scale=alt.Scale(domain=["Fundo", "Benchmark"],
                                                            range=[[1, 0], [6, 4]]), legend=None)
     )
-    alvo = base.mark_point(size=120).encode(opacity=alt.value(0)).add_params(perto)
-    pontos = base.mark_point(filled=True, size=50).encode(
-        opacity=alt.condition(perto, alt.value(1), alt.value(0)),
+    alvo = base.mark_point(size=120).encode(
+        opacity=alt.value(0),
         tooltip=[alt.Tooltip("Nome:N", title="Fundo"), alt.Tooltip("Data:T", format="%d/%m/%Y"),
                  alt.Tooltip("Valor:Q", format=".2f", title="Base 100")],
     )
     regua = alt.Chart(df).mark_rule(color=CINZA[25]).encode(x="Data:T").transform_filter(perto)
-    return (linhas_ch + alvo + pontos + regua).properties(height=altura)
+    return (linhas_ch + alvo.add_params(perto) + regua).properties(height=altura)
 
 
 # ================================================================ histórico desde o início
@@ -891,13 +903,24 @@ if multi_sub:
             st.markdown(f"**{nome}** — usando `{esc}` · disponíveis: " + ", ".join(f"`{x}`" for x in subs))
 
 # ---------- Controles
-c1, c2 = st.columns([3, 2])
-with c1:
-    tipos_disp = [t for t in ESTRATEGIAS + ["Sem classificação"] if t in por_tipo]
-    filtro = st.multiselect("Estratégias", tipos_disp, placeholder="Todas")
-with c2:
-    periodo_graf = st.radio("Período do gráfico", ["Mês", "YTD", "12 meses", "24 meses", "36 meses"], index=2,
-                            horizontal=True)
+tipos_disp = [t for t in ESTRATEGIAS + ["Sem classificação"] if t in por_tipo]
+filtro = st.multiselect("Estratégias", tipos_disp, placeholder="Todas")
+
+
+@st.fragment
+def secao_grafico(tipo: str, series_f: dict, series_b: dict, ref: pd.Timestamp):
+    """Gráfico só é montado quando o usuário pede; mexer nele não recarrega o resto da página."""
+    if not st.toggle("📈 Mostrar gráfico", key=f"mostrar_graf_{tipo}"):
+        return
+    periodo = st.radio("Período", ["Mês", "YTD", "12 meses", "24 meses", "36 meses"], index=2,
+                       horizontal=True, key=f"periodo_graf_{tipo}", label_visibility="collapsed")
+    j = janelas(pd.Series(0, index=[ref - pd.Timedelta(days=1), ref]))
+    inicio = {"Mês": j["Mês (MTD)"][0]}.get(periodo) or j[periodo][0]
+    ch = grafico(series_f, {k: v[v.index <= ref] for k, v in series_b.items()}, inicio)
+    if ch is not None:
+        st.altair_chart(ch, width="stretch")
+        if series_b:
+            st.caption("Linha tracejada = benchmark. Passe o mouse para ver os valores.")
 
 def estilo_tabela(t: pd.DataFrame, com_cdi: bool):
     """Retorno positivo em verde, negativo em vermelho; %CDI verde se >= 100%; benchmark em cinza."""
@@ -1176,7 +1199,7 @@ for tipo in tipos_disp:
     chave = f"tabela_{tipo}"
     st.dataframe(estilo_tabela(final[colunas + ["_cnpj", "_sub", "_sep"]], com_cdi), hide_index=True,
                  width="content", column_config=cfg_tab, column_order=colunas, key=chave, row_height=28,
-                 height=min(1400, 28 * (len(final) + 1) + 3),  # mostra todas as linhas, sem rolagem interna
+                 height=min(1600, 28 * len(final) + 40),  # mostra todas as linhas, sem rolagem interna
                  selection_mode="single-cell", placeholder=" ",
                  on_select=lambda k=chave, t=final, tp=tipo: _abrir_historico(k, t, tp))
     ytd_bench = tab.loc[tab["_quartil"] == -1, "YTD"].dropna()
@@ -1191,14 +1214,7 @@ for tipo in tipos_disp:
     # gráfico do tipo, com benchmark
     series_f = {n: s for n, (_, s, _) in fundos_tipo.items()}
     todas_series.update(series_f)
-    j = janelas(pd.Series(0, index=[ref - pd.Timedelta(days=1), ref]))
-    inicio = {"Mês": j["Mês (MTD)"][0]}.get(periodo_graf) or j[periodo_graf][0]
-    series_b = {b: bench[b].dropna() for b in nomes_bench}
-    ch = grafico(series_f, {k: v[v.index <= ref] for k, v in series_b.items()}, inicio)
-    if ch is not None:
-        st.altair_chart(ch, width="stretch")
-        if series_b:
-            st.caption("Linha tracejada = benchmark. Passe o mouse para ver os valores.")
+    secao_grafico(tipo, series_f, {b: bench[b].dropna() for b in nomes_bench}, ref)
 
 st.caption("Clique no nome de um fundo (ou em **histórico ›**) para abrir a rentabilidade mês a mês desde o início.")
 if "abrir_hist" in st.session_state:
