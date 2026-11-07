@@ -362,7 +362,7 @@ def benchmark_soma(ipca: pd.Series, imab: pd.Series) -> pd.Series:
 
 
 # ================================================================ cálculo
-PERIODOS = ["Dia", "Mês (MTD)", "YTD", "12 meses", "24 meses", "36 meses"]
+PERIODOS = ["Dia", "Mês (MTD)", "Mês anterior", "YTD", "12 meses", "24 meses", "36 meses"]
 PERIODOS_CDI = ["YTD", "12 meses"]  # comparação com o CDI só nesses períodos
 
 
@@ -953,7 +953,7 @@ def estilo_tabela(t: pd.DataFrame, com_cdi: bool):
     return est
 
 
-ROTULO_PER = {"Mês (MTD)": "MTD", "12 meses": "12M", "24 meses": "24M", "36 meses": "36M"}
+ROTULO_PER = {"Mês (MTD)": "MTD", "Mês anterior": "M-1", "12 meses": "12M", "24 meses": "24M", "36 meses": "36M"}
 # larguras fixas para as tabelas dos quartis ficarem alinhadas entre si
 FMT_TABELA = {
     "Fundo": st.column_config.TextColumn(width=215, pinned=True),  # fica fixa ao rolar para a direita
