@@ -416,7 +416,7 @@ def linha_performance(serie: pd.Series, cdi: pd.Series | None, com_cdi: bool) ->
 # Esquema de cores Itaú BBA (hub de branding e design).
 AZUL_IBBA, LARANJA_IBBA, AMARELO = "#000512", "#FF5500", "#F7D317"
 VERDE_POS, VERMELHO_NEG = "#1E7B53", "#B3261E"
-VERDE_DESTAQUE = "#DCEFE4"  # fundo da célula quando o fundo supera o benchmark
+VERDE_DESTAQUE = "#EEF6F1"  # verde-sálvia bem suave: fundo da célula quando o fundo supera o benchmark
 COLS_DESTAQUE = ["YTD", "12 meses", "24 meses", "36 meses"]
 AMARELO_QUARTIL = "#F6E7A6"  # amarelo IBBA suavizado, para as faixas de quartil  # texto de retorno positivo / negativo
 CINZA = {85: "#272B35", 70: "#4E5159", 55: "#74767D", 40: "#9A9BA0", 25: "#C0C1C4", 10: "#E6E6E7"}
@@ -954,7 +954,7 @@ def estilo_tabela(t: pd.DataFrame, com_cdi: bool):
 
         def acima_bench(col):
             r = ref[col.name]
-            return [f"background-color: {VERDE_DESTAQUE}; font-weight: 700"
+            return [f"background-color: {VERDE_DESTAQUE}"
                     if pd.notna(v) and pd.notna(r) and not eh_bench.loc[i] and not eh_sep.loc[i] and v > r else ""
                     for i, v in col.items()]
         est = est.apply(acima_bench, axis=0, subset=cols_flag)
