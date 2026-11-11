@@ -334,5 +334,11 @@
     "Nome": "AZ Quest Long Biased",
     "Estratégia": "LB",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "26.768.800/0001-40",
+    "Nome": "Leblon Long Only",
+    "Estratégia": "LO",
+    "Subclasse": ""
   }
 ]
