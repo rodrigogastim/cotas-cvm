@@ -223,11 +223,12 @@ def atualizar_cotas(cnpjs: list[str]) -> pd.DataFrame:
 def ler_cotas_salvas() -> pd.DataFrame | None:
     if not ARQ_COTAS.exists():
         return None
+    # mtime sem "_" na frente: o Streamlit ignora parâmetros com "_" na chave do cache
     return _ler_cotas_cache(ARQ_COTAS.stat().st_mtime)  # relê o arquivo só quando ele muda
 
 
 @st.cache_data(max_entries=2, show_spinner=False)
-def _ler_cotas_cache(_mtime: float) -> pd.DataFrame:
+def _ler_cotas_cache(mtime: float) -> pd.DataFrame:
     df = pd.read_csv(ARQ_COTAS, dtype=str).fillna({"ID_SUBCLASSE": ""})
     df["CNPJ"] = df["CNPJ"].str.zfill(14)
     df["DT_COMPTC"] = pd.to_datetime(df["DT_COMPTC"])
@@ -346,7 +347,7 @@ def ler_benchmarks() -> pd.DataFrame | None:
 
 
 @st.cache_data(max_entries=2, show_spinner=False)
-def _ler_bench_cache(_mtime: float) -> pd.DataFrame:
+def _ler_bench_cache(mtime: float) -> pd.DataFrame:
     df = pd.read_csv(ARQ_BENCH, index_col="Data", parse_dates=["Data"])
     if {"IPCA", "IMA-B"} <= set(df.columns):
         df["IPCA + IMA-B"] = benchmark_soma(df["IPCA"], df["IMA-B"])
