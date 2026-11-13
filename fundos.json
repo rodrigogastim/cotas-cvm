@@ -346,5 +346,11 @@
     "Nome": "Vinland LS",
     "Estratégia": "EH",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "28.581.159/0001-66",
+    "Nome": "Vinland Long Bias",
+    "Estratégia": "LB",
+    "Subclasse": ""
   }
 ]
