@@ -340,5 +340,11 @@
     "Nome": "Leblon Long Only",
     "Estratégia": "LO",
     "Subclasse": ""
+  },
+  {
+    "CNPJ": "58.650.505/0001-81",
+    "Nome": "Vinland LS",
+    "Estratégia": "EH",
+    "Subclasse": ""
   }
 ]
